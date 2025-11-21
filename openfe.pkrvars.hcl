@@ -1,0 +1,2 @@
+name = "openfe"
+installs = [ "openfe" ]
