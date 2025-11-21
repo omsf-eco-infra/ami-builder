@@ -47,8 +47,9 @@ jobs:
 
           now = datetime.datetime.utcnow()
           today = now.strftime("%Y%m%d")
-          sha = os.environ["GITHUB_SHA"]
-          suffix = f"{today}-{sha}"
+          full_sha = os.environ["GITHUB_SHA"]
+          short_sha = full_sha[:7]
+          suffix = f"{today}-{short_sha}"
           try:
               next_year = now.replace(year=now.year + 1)
           except ValueError:
@@ -57,7 +58,7 @@ jobs:
           tags = json.dumps(
               {
                   "omsf-ami-type": "update",
-                  "commit": sha,
+                  "commit": short_sha,
                   "deletion-date": deletion,
               }
           )
