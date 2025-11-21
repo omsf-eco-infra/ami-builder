@@ -61,6 +61,12 @@ source "amazon-ebs" "dlami" {
     delete_on_termination = true
   }
 
+  run_tags = {
+    Name        = "packer-ami-build"
+    template    = local.ami_base_name
+    environment = var.name
+  }
+
   tags = {
     Name        = "${local.ami_base_name}"
     built_with  = "packer"
@@ -69,7 +75,7 @@ source "amazon-ebs" "dlami" {
 }
 
 build {
-  name    = "dlami-${var.name}-build"
+  name    = "${var.name}-build"
   sources = ["source.amazon-ebs.dlami"]
 
   provisioner "shell" {
@@ -87,5 +93,9 @@ build {
 
   provisioner "shell" {
     script = "build-scripts/setup-env.sh"
+    environment_vars = [
+      "MICROMAMBA_PACKAGES=${join(" ", var.installs)}",
+      "MICROMAMBA_ENV_NAME=${var.name}",
+    ]
   }
 }
