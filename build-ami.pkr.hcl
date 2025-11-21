@@ -8,20 +8,44 @@ packer {
 }
 
 variable "aws_region" {
-  type    = string
-  default = "us-east-1"
+  description = "AWS region where the AMI build will run."
+  type        = string
+  default     = "us-east-1"
 }
 
 variable "name" {
-  type    = string
+  description = "Logical name for the AMI variant (also used for environment names)."
+  type        = string
 }
 
 variable "installs" {
-  type    = list(string)
+  description = "List of micromamba packages to install into the AMI image."
+  type        = list(string)
+}
+
+variable "ami_name_suffix" {
+  description = "Optional suffix appended to the AMI base name; hyphen is added automatically if needed."
+  type        = string
+  default     = ""
+}
+
+variable "additional_tags" {
+  description = "JSON string of additional AMI tags merged with the default tag set."
+  type        = string
+  default     = "{}"
 }
 
 locals {
-  ami_base_name = "dlami-${var.name}"
+  ami_base_name        = "dlami-${var.name}"
+  ami_name_suffix      = trimspace(var.ami_name_suffix)
+  ami_base_with_suffix = "${local.ami_base_name}${local.ami_name_suffix}"
+  ami_name             = "${local.ami_base_name}-${local.ami_name_suffix}-{{timestamp}}"
+  base_tags = {
+    Name        = local.ami_base_with_suffix
+    built_with  = "packer"
+    environment = var.name
+  }
+  merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
 }
 
 source "amazon-ebs" "dlami" {
@@ -42,22 +66,22 @@ source "amazon-ebs" "dlami" {
 
   ssh_username = "ubuntu"
 
-  ami_name        = "${local.ami_base_name}-{{timestamp}}"
+  ami_name        = local.ami_name
   ami_description = "AWS DLAMI (Ubuntu) + ${join(", ", var.installs)}"
 
   ami_groups = ["all"]
 
   launch_block_device_mappings {
-    device_name = "/dev/sda1"
-    volume_size = 200
-    volume_type = "gp3"
+    device_name           = "/dev/sda1"
+    volume_size           = 200
+    volume_type           = "gp3"
     delete_on_termination = true
   }
 
   ami_block_device_mappings {
-    device_name = "/dev/sda1"
-    volume_size = 200
-    volume_type = "gp3"
+    device_name           = "/dev/sda1"
+    volume_size           = 200
+    volume_type           = "gp3"
     delete_on_termination = true
   }
 
@@ -68,15 +92,11 @@ source "amazon-ebs" "dlami" {
 
   run_tags = {
     Name        = "packer-ami-build"
-    template    = local.ami_base_name
+    template    = local.ami_base_with_suffix
     environment = var.name
   }
 
-  tags = {
-    Name        = "${local.ami_base_name}"
-    built_with  = "packer"
-    environment = var.name
-  }
+  tags = local.merged_tags
 }
 
 build {

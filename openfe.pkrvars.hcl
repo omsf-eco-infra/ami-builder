@@ -1,2 +1,2 @@
-name = "openfe"
-installs = [ "openfe" ]
+name     = "openfe"
+installs = ["openfe"]
