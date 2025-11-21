@@ -98,4 +98,25 @@ build {
       "MICROMAMBA_ENV_NAME=${var.name}",
     ]
   }
+
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "sudo mkdir -p /tmp/smoke-tests",
+      "sudo chown ubuntu:ubuntu /tmp/smoke-tests",
+    ]
+  }
+
+  provisioner "file" {
+    source      = "smoke-tests/${var.name}.sh"
+    destination = "/tmp/smoke-tests/${var.name}.sh"
+  }
+
+  provisioner "shell" {
+    script = "build-scripts/smoke-test.sh"
+    environment_vars = [
+      "MICROMAMBA_ENV_NAME=${var.name}",
+    ]
+  }
 }
