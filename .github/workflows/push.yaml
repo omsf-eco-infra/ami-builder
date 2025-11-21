@@ -3,15 +3,26 @@ name: Update AMI (push or manual)
 on:
   repository_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+
 jobs:
   assume-role:
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [openfe]
     runs-on: ubuntu-latest
+    env:
+      PROJECT: ${{ matrix.project }}
+    outputs:
+      ami_id: ${{ steps.packer.outputs.ami_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +31,83 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify caller identity
         run: aws sts get-caller-identity
+
+      - name: Set build metadata
+        id: metadata
+        shell: python
+        run: |
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          now = datetime.datetime.utcnow()
+          today = now.strftime("%Y%m%d")
+          sha = os.environ["GITHUB_SHA"]
+          suffix = f"{today}-{sha}"
+          try:
+              next_year = now.replace(year=now.year + 1)
+          except ValueError:
+              next_year = now + datetime.timedelta(days=365)
+          deletion = next_year.strftime("%Y%m%d")
+          tags = json.dumps(
+              {
+                  "omsf-ami-type": "update",
+                  "commit": sha,
+                  "deletion-date": deletion,
+              }
+          )
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as github_output:
+              github_output.write(f"ami_name_suffix={suffix}\n")
+              github_output.write(f"additional_tags={tags}\n")
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          packer_version: latest
+
+      - name: Build AMI
+        id: packer
+        env:
+          AMI_NAME_SUFFIX: ${{ steps.metadata.outputs.ami_name_suffix }}
+          ADDITIONAL_TAGS: ${{ steps.metadata.outputs.additional_tags }}
+        run: |
+          set -euo pipefail
+          packer init build-ami.pkr.hcl
+          packer build -machine-readable \
+            -var-file "${PROJECT}.pkrvars.hcl" \
+            -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
+            -var "additional_tags=${ADDITIONAL_TAGS}" \
+            build-ami.pkr.hcl | tee packer-output.log
+          python - <<'PY'
+          import csv
+          import os
+
+          ami_id = None
+          with open("packer-output.log", newline="", encoding="utf-8") as log_file:
+              reader = csv.reader(log_file)
+              for row in reader:
+                  if len(row) >= 6 and row[2] == "artifact" and row[3] == "0" and row[4] == "id":
+                      value = row[5].strip()
+                      if not value:
+                          continue
+                      candidate = value.split(":", 1)[-1].strip()
+                      if candidate:
+                          ami_id = candidate
+                          break
+
+          if not ami_id:
+              raise SystemExit("AMI ID not found in packer output")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as github_output:
+              github_output.write(f"ami_id={ami_id}\n")
+
+          print(f"Built AMI: {ami_id}")
+          PY
+        shell: bash
