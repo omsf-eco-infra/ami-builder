@@ -1,0 +1,26 @@
+name: Update AMI (push or manual)
+
+on:
+  repository_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  assume-role:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-builder
+          aws-region: us-east-1
+
+      - name: Verify caller identity
+        run: aws sts get-caller-identity
