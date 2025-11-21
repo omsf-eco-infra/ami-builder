@@ -87,7 +87,7 @@ source "amazon-ebs" "dlami" {
 
   aws_polling {
     # large AMIs can take a while to become available
-    max_attempts = 1000
+    max_attempts = 2000
   }
 
   run_tags = {
