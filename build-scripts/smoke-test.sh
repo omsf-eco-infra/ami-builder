@@ -32,6 +32,7 @@ sudo -u ubuntu env \
   SMOKE_TEST="$SMOKE_TEST" \
   bash <<'EOF'
 set -euo pipefail
+BASH_XTRACEFD=1  # Send `set -x` output to stdout (fd 1)
 
 if [[ ! -f "$SMOKE_TEST" ]]; then
   echo "[smoke_test] Smoke test script '$SMOKE_TEST' not found" >&2
