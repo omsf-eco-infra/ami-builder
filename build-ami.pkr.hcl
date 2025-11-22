@@ -38,7 +38,7 @@ variable "additional_tags" {
 locals {
   ami_base_name        = "dlami-${var.name}"
   ami_name_suffix      = trimspace(var.ami_name_suffix)
-  ami_base_with_suffix = "${local.ami_base_name}${local.ami_name_suffix}"
+  ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_name}-${local.ami_name_suffix}-{{timestamp}}"
   base_tags = {
     Name        = local.ami_base_with_suffix
@@ -103,9 +103,11 @@ build {
   name    = "${var.name}-build"
   sources = ["source.amazon-ebs.dlami"]
 
+  ## Linux environment
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
+      "echo '[install base] Installing prerequisite packages'",
       "set -euxo pipefail",
       "sudo apt-get update",
       "sudo apt-get install -y curl bzip2",
@@ -115,12 +117,14 @@ build {
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
+      "echo '[install ssm agent] Installing AWS SSM Agent for remote management'",
       "set -euxo pipefail",
-      "sudo apt-get install -y amazon-ssm-agent",
-      "sudo systemctl enable --now amazon-ssm-agent",
+      "sudo snap install amazon-ssm-agent --classic",
+      "sudo systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service",
     ]
   }
 
+  ## Micromamba environment
   provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
   }
@@ -133,6 +137,7 @@ build {
     ]
   }
 
+  ## Smoke tests
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
