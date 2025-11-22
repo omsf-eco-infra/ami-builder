@@ -113,6 +113,15 @@ build {
   }
 
   provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "sudo apt-get install -y amazon-ssm-agent",
+      "sudo systemctl enable --now amazon-ssm-agent",
+    ]
+  }
+
+  provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
   }
 
