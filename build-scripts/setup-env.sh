@@ -42,4 +42,22 @@ EOF
 
 sudo chmod 644 /etc/profile.d/micromamba.sh
 
+echo "[setup_env] Enabling auto-activation of '${env_name}' for ubuntu user"
+
+# Ensure ubuntu's bashrc exists and append an activation snippet if not already present
+sudo -u ubuntu touch /home/ubuntu/.bashrc
+if ! sudo -u ubuntu grep -q 'micromamba auto-activation' /home/ubuntu/.bashrc; then
+  sudo -u ubuntu tee -a /home/ubuntu/.bashrc >/dev/null << EOF
+
+# >>> micromamba auto-activation >>>
+if [ -f /etc/profile.d/micromamba.sh ]; then
+  source /etc/profile.d/micromamba.sh
+fi
+if command -v micromamba >/dev/null 2>&1; then
+  micromamba activate "${env_name}"
+fi
+# <<< micromamba auto-activation <<<
+EOF
+fi
+
 echo "[setup_env] Done."
