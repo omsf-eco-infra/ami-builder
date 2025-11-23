@@ -36,7 +36,7 @@ variable "additional_tags" {
 }
 
 locals {
-  ami_base_name        = "dlami-${var.name}"
+  ami_base_name        = var.name
   ami_name_suffix      = trimspace(var.ami_name_suffix)
   ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_name}-${local.ami_name_suffix}-{{timestamp}}"
@@ -48,7 +48,7 @@ locals {
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
 }
 
-source "amazon-ebs" "dlami" {
+source "amazon-ebs" "this" {
   region        = var.aws_region
   instance_type = "t3.large"
 
@@ -91,7 +91,7 @@ source "amazon-ebs" "dlami" {
   }
 
   run_tags = {
-    Name        = "packer-ami-build"
+    Name        = "ami-builder-${local.ami_base_with_suffix}"
     template    = local.ami_base_with_suffix
     environment = var.name
   }
@@ -101,7 +101,7 @@ source "amazon-ebs" "dlami" {
 
 build {
   name    = "${var.name}-build"
-  sources = ["source.amazon-ebs.dlami"]
+  sources = ["source.amazon-ebs.this"]
 
   ## Linux environment
   provisioner "shell" {
