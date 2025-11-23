@@ -3,7 +3,7 @@ set -euxo pipefail
 
 echo "[nvidia module check] Checking DKMS + module availability"
 dpkg -l | grep -E "nvidia-(dkms|driver|utils)" || {
-  echo "NVIDIA driver packages not installed"; exit 1;
+  echo "NVIDIA driver packages not installed"; exit 1
 }
 
 # DKMS reports that the module was built

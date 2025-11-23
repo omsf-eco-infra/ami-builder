@@ -119,7 +119,7 @@ build {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "set -euxo pipefail",
-      "sudo apt-get update",
+
 
       # Build deps for the DKMS driver module
       "sudo apt-get install -y --no-install-recommends build-essential dkms linux-headers-$(uname -r) pciutils",
