@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -euxo pipefail
 
 echo "[nvidia module check] Checking DKMS + module availability"
