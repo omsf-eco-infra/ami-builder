@@ -67,7 +67,7 @@ source "amazon-ebs" "dlami" {
   ssh_username = "ubuntu"
 
   ami_name        = local.ami_name
-  ami_description = "AWS DLAMI (Ubuntu) + ${join(", ", var.installs)}"
+  ami_description = "[OMSF] Ubuntu + NVIDIA + ${join(", ", var.installs)}"
 
   ami_groups = ["all"]
 
@@ -156,11 +156,7 @@ build {
 
   ## Smoke tests
   provisioner "shell" {
-    inline_shebang = "/usr/bin/env bash"
-    inline = [
-      "echo ['nvidia module check] Verifying nvidia kernel module is loaded'",
-      "lsmod | grep -i nvidia || (echo 'nvidia module not loaded' >&2; exit 1)"
-    ]
+    script = "build-scripts/nvidia-smoke-test.sh"
   }
 
   provisioner "shell" {
