@@ -36,7 +36,7 @@ variable "additional_tags" {
 }
 
 locals {
-  ami_base_name        = "dlami-${var.name}"
+  ami_base_name        = var.name
   ami_name_suffix      = trimspace(var.ami_name_suffix)
   ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_name}-${local.ami_name_suffix}-{{timestamp}}"
@@ -48,26 +48,26 @@ locals {
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
 }
 
-source "amazon-ebs" "dlami" {
+source "amazon-ebs" "this" {
   region        = var.aws_region
   instance_type = "t3.large"
 
   source_ami_filter {
     filters = {
-      name                = "Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04) *"
+      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
       architecture        = "x86_64"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
 
-    owners      = ["amazon"]
+    owners      = ["099720109477"] # Canonical
     most_recent = true
   }
 
   ssh_username = "ubuntu"
 
   ami_name        = local.ami_name
-  ami_description = "AWS DLAMI (Ubuntu) + ${join(", ", var.installs)}"
+  ami_description = "[OMSF] Ubuntu + NVIDIA + ${join(", ", var.installs)}"
 
   ami_groups = ["all"]
 
@@ -91,7 +91,7 @@ source "amazon-ebs" "dlami" {
   }
 
   run_tags = {
-    Name        = "packer-ami-build"
+    Name        = "ami-builder-${local.ami_base_with_suffix}"
     template    = local.ami_base_with_suffix
     environment = var.name
   }
@@ -101,7 +101,7 @@ source "amazon-ebs" "dlami" {
 
 build {
   name    = "${var.name}-build"
-  sources = ["source.amazon-ebs.dlami"]
+  sources = ["source.amazon-ebs.this"]
 
   ## Linux environment
   provisioner "shell" {
@@ -114,13 +114,19 @@ build {
     ]
   }
 
+  ## NVIDIA drivers
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
-      "echo '[install ssm agent] Installing AWS SSM Agent for remote management'",
       "set -euxo pipefail",
-      "sudo snap install amazon-ssm-agent --classic",
-      "sudo systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service",
+
+
+      # Build deps for the DKMS driver module
+      "sudo apt-get install -y --no-install-recommends build-essential dkms linux-headers-$(uname -r) pciutils",
+
+      "sudo apt-get install -y --no-install-recommends nvidia-dkms-550 nvidia-utils-550 nvidia-driver-550",
+
+      "sudo systemctl enable nvidia-persistenced || true",
     ]
   }
 
@@ -138,6 +144,10 @@ build {
   }
 
   ## Smoke tests
+  provisioner "shell" {
+    script = "build-scripts/nvidia-smoke-test.sh"
+  }
+
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
