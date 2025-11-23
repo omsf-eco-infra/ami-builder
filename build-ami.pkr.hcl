@@ -54,13 +54,13 @@ source "amazon-ebs" "dlami" {
 
   source_ami_filter {
     filters = {
-      name                = "Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04) *"
+      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
       architecture        = "x86_64"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
 
-    owners      = ["amazon"]
+    owners      = ["099720109477"] # Canonical
     most_recent = true
   }
 
@@ -114,6 +114,23 @@ build {
     ]
   }
 
+  ## NVIDIA drivers
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "sudo apt-get update",
+
+      # Build deps for the DKMS driver module
+      "sudo apt-get install -y --no-install-recommends build-essential dkms linux-headers-$(uname -r) pciutils",
+
+      "sudo apt-get install -y --no-install-recommends nvidia-dkms-550 nvidia-utils-550 nvidia-driver-550",
+
+      "sudo systemctl enable nvidia-persistenced || true",
+    ]
+  }
+
+  # TODO: this shouldn't be needed to 24.04
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
@@ -138,6 +155,14 @@ build {
   }
 
   ## Smoke tests
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "echo ['nvidia module check] Verifying nvidia kernel module is loaded'",
+      "lsmod | grep -i nvidia || (echo 'nvidia module not loaded' >&2; exit 1)"
+    ]
+  }
+
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
