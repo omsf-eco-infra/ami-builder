@@ -21,6 +21,12 @@ resource "aws_cloudwatch_log_group" "test_logs" {
   tags              = var.tags
 }
 
+resource "github_actions_secret" "test_log_group_name" {
+  repository      = data.github_repository.target.name
+  secret_name     = var.cloudwatch_log_group_secret_name
+  plaintext_value = aws_cloudwatch_log_group.test_logs.name
+}
+
 resource "aws_security_group" "test_instances" {
   name                   = var.security_group_name
   description            = "Egress-only security group for AMI test instances."
@@ -37,6 +43,12 @@ resource "aws_security_group" "test_instances" {
   }
 
   tags = var.tags
+}
+
+resource "github_actions_secret" "test_security_group_id" {
+  repository      = data.github_repository.target.name
+  secret_name     = var.security_group_secret_name
+  plaintext_value = aws_security_group.test_instances.id
 }
 
 data "aws_iam_policy_document" "test_instance_assume_role" {
@@ -98,6 +110,12 @@ resource "aws_iam_instance_profile" "test_instance" {
   name = var.instance_profile_name
   role = aws_iam_role.test_instance.name
   tags = var.tags
+}
+
+resource "github_actions_secret" "test_instance_profile_name" {
+  repository      = data.github_repository.target.name
+  secret_name     = var.instance_profile_secret_name
+  plaintext_value = aws_iam_instance_profile.test_instance.name
 }
 
 data "aws_iam_policy_document" "test_runner" {

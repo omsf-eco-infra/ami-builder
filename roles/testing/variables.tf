@@ -63,10 +63,22 @@ variable "instance_profile_name" {
   default     = "ami-test-instance-profile"
 }
 
+variable "instance_profile_secret_name" {
+  description = "GitHub Actions secret name that stores the AMI test instance profile name."
+  type        = string
+  default     = "TEST_MAIN_INSTANCE_PROFILE_NAME"
+}
+
 variable "cloudwatch_log_group_name" {
   description = "Name of the CloudWatch Logs group used for test output."
   type        = string
   default     = "/ami-tests"
+}
+
+variable "cloudwatch_log_group_secret_name" {
+  description = "GitHub Actions secret name that stores the AMI test CloudWatch Logs group name."
+  type        = string
+  default     = "TEST_MAIN_LOG_GROUP_NAME"
 }
 
 variable "cloudwatch_log_group_retention_in_days" {
@@ -79,6 +91,12 @@ variable "security_group_name" {
   description = "Name of the security group used by AMI test instances."
   type        = string
   default     = "ami-test-ssm-egress"
+}
+
+variable "security_group_secret_name" {
+  description = "GitHub Actions secret name that stores the AMI test security group ID."
+  type        = string
+  default     = "TEST_MAIN_SECURITY_GROUP_ID"
 }
 
 variable "vpc_id" {
