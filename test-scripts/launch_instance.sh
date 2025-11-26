@@ -13,7 +13,7 @@ Required:
 
 Optional:
   --subnet SUBNET_ID         Subnet to place the instance in (defaults to account/VPC default).
-  --tag Key=Value            Tag to apply (repeatable, applies to instance + root volume). Default: Purpose=ami-test.
+  --tag Key=Value            Tag to apply (repeatable, applies to instance + root volume). Empty by default.
   --key-name KEY_NAME        EC2 key pair name (enables SSH fallback and forces public IP association).
   --volume-size GB           Override root volume size (gp3, DeleteOnTermination=true).
   --wait-timeout SECONDS     Wait for instance-status-ok (default: 900).
@@ -46,7 +46,7 @@ KEY_NAME=""
 ROOT_VOL_SIZE=""
 WAIT_TIMEOUT=900
 USER_DATA_FILE=""
-TAGS=("Purpose=ami-test")
+TAGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
