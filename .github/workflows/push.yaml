@@ -190,7 +190,7 @@ jobs:
           fi
           ./test-scripts/run_tests_ssm.sh \
             --instance "${INSTANCE_ID}" \
-            --script full-tests/openfe.sh \
+            --script ./full-tests/openfe.sh \
             --log-group "${LOG_GROUP_NAME}" \
             --comment "AMI validation (${GITHUB_RUN_ID})"
 
