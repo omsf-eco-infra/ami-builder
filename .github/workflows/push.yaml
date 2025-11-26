@@ -13,7 +13,7 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
-  assume-role:
+  build-ami:
     strategy:
       fail-fast: false
       matrix:
@@ -32,9 +32,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify caller identity
-        run: aws sts get-caller-identity
 
       - name: Set build metadata
         id: metadata
