@@ -45,6 +45,12 @@ variable "test_runner_role_name" {
   default     = "github-actions-ami-testing"
 }
 
+variable "test_runner_role_secret_name" {
+  description = "GitHub Actions secret name to store the AMI test runner role ARN."
+  type        = string
+  default     = "AWS_TEST_ASSUME_ROLE_ARN"
+}
+
 variable "instance_role_name" {
   description = "Name for the IAM role attached to test instances."
   type        = string

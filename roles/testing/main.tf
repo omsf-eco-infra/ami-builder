@@ -1,3 +1,7 @@
+data "github_repository" "target" {
+  full_name = var.github_repository
+}
+
 module "workflow_oidc" {
   source = "../modules/github_actions_oidc"
   providers = {
@@ -188,4 +192,10 @@ resource "aws_iam_role_policy" "test_runner_permissions" {
   name   = "${var.test_runner_role_name}-runner"
   role   = aws_iam_role.github_ami_test_runner.id
   policy = data.aws_iam_policy_document.test_runner.json
+}
+
+resource "github_actions_secret" "test_runner_role_arn" {
+  repository      = data.github_repository.target.name
+  secret_name     = var.test_runner_role_secret_name
+  plaintext_value = aws_iam_role.github_ami_test_runner.arn
 }
