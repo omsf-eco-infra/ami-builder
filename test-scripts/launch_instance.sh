@@ -14,12 +14,10 @@ Required:
 Optional:
   --subnet SUBNET_ID         Subnet to place the instance in (defaults to account/VPC default).
   --tag Key=Value            Tag to apply (repeatable, applies to instance + root volume). Empty by default.
-  --key-name KEY_NAME        EC2 key pair name (enables SSH fallback and forces public IP association).
   --volume-size GB           Override root volume size (gp3, DeleteOnTermination=true).
-  --wait-timeout SECONDS     Wait for instance-status-ok (default: 900).
+  --wait-timeout SECONDS    Wait for instance-status-ok (default: 900).
   --region REGION            AWS region override.
   --profile PROFILE          AWS CLI profile to use.
-  --user-data-file PATH      Optional user data file (passed as file://).
   -h, --help                 Show this help text.
 
 Outputs the InstanceId on stdout after the status checks pass.
@@ -42,10 +40,8 @@ INSTANCE_TYPE=""
 SUBNET_ID=""
 SECURITY_GROUP_ID=""
 IAM_PROFILE=""
-KEY_NAME=""
 ROOT_VOL_SIZE=""
 WAIT_TIMEOUT=900
-USER_DATA_FILE=""
 TAGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -56,12 +52,10 @@ while [[ $# -gt 0 ]]; do
     --security-group|--sg) SECURITY_GROUP_ID="${2:-}"; shift 2;;
     --iam-profile) IAM_PROFILE="${2:-}"; shift 2;;
     --tag) TAGS+=("${2:-}"); shift 2;;
-    --key-name) KEY_NAME="${2:-}"; shift 2;;
     --volume-size) ROOT_VOL_SIZE="${2:-}"; shift 2;;
     --wait-timeout) WAIT_TIMEOUT="${2:-}"; shift 2;;
     --region) AWS_REGION_OPT=(--region "${2:-}"); shift 2;;
     --profile) AWS_PROFILE_OPT=(--profile "${2:-}"); shift 2;;
-    --user-data-file) USER_DATA_FILE="${2:-}"; shift 2;;
     -h|--help) usage; exit 0;;
     *)
       usage
@@ -76,10 +70,6 @@ require aws
 [[ -n "$INSTANCE_TYPE" ]] || fail "--instance-type is required"
 [[ -n "$SECURITY_GROUP_ID" ]] || fail "--security-group is required"
 [[ -n "$IAM_PROFILE" ]] || fail "--iam-profile is required"
-
-if [[ -n "$USER_DATA_FILE" && ! -f "$USER_DATA_FILE" ]]; then
-  fail "User data file '$USER_DATA_FILE' not found"
-fi
 
 build_tag_spec() {
   local resource_type="$1"
@@ -123,16 +113,8 @@ if [[ -n "$SUBNET_ID" ]]; then
   RUN_ARGS+=(--subnet-id "$SUBNET_ID")
 fi
 
-if [[ -n "$KEY_NAME" ]]; then
-  RUN_ARGS+=(--key-name "$KEY_NAME" --associate-public-ip-address)
-fi
-
 if [[ -n "$ROOT_VOL_SIZE" ]]; then
   RUN_ARGS+=(--block-device-mappings "DeviceName=/dev/xvda,Ebs={VolumeSize=${ROOT_VOL_SIZE},VolumeType=gp3,DeleteOnTermination=true}")
-fi
-
-if [[ -n "$USER_DATA_FILE" ]]; then
-  RUN_ARGS+=(--user-data "file://${USER_DATA_FILE}")
 fi
 
 echo "[launch_instance] Starting instance from $AMI_ID ..."
