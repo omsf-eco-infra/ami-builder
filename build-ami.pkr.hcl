@@ -43,6 +43,7 @@ locals {
   base_tags = {
     Name        = local.ami_base_with_suffix
     built_with  = "packer"
+    managed_by  = "omsf-ami-builder"
     environment = var.name
   }
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
