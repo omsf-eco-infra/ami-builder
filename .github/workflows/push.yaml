@@ -56,7 +56,7 @@ jobs:
               {
                   "omsf-ami-type": "update",
                   "commit": short_sha,
-                  "deletion-date": deletion,
+                  "delete-after": deletion,
               }
           )
 
