@@ -13,14 +13,20 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "name" {
-  description = "Logical name for the AMI variant (also used for environment names)."
+variable "ami_name" {
+  description = "Logical name for the AMI variant."
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.ami_name)) > 0
+    error_message = "The ami_name must be a non-empty string."
+  }
 }
 
-variable "installs" {
-  description = "List of micromamba packages to install into the AMI image."
+variable "environments" {
+  description = "Ordered list of environment directory names (under environments/) to include. Empty list means auto-discover all."
   type        = list(string)
+  default     = []
 }
 
 variable "ami_name_suffix" {
@@ -36,16 +42,39 @@ variable "additional_tags" {
 }
 
 locals {
-  ami_base_name        = var.name
+  ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
   ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
-  ami_name             = "${local.ami_base_name}-${local.ami_name_suffix}-{{timestamp}}"
-  base_tags = {
-    Name        = local.ami_base_with_suffix
-    built_with  = "packer"
-    managed_by  = "omsf-ami-builder"
-    environment = var.name
+  ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
+
+  available_environment_paths = {
+    for path in fileset(path.root, "environments/*/environment.yaml") :
+    basename(dirname(path)) => dirname(path)
   }
+
+  available_environment_names      = sort(keys(local.available_environment_paths))
+  requested_environment_names      = length(var.environments) > 0 ? var.environments : local.available_environment_names
+  normalized_environment_names     = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
+  enabled_environment_names        = sort(distinct(local.normalized_environment_names))
+  missing_environment_names        = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
+
+  remote_environment_root = "/tmp/environments"
+
+  environment_directories = [for env in local.enabled_environment_names : "${local.remote_environment_root}/${env}"]
+  environment_dirs_string = trimspace(join(" ", local.environment_directories))
+
+  default_environment = length(local.enabled_environment_names) > 0 ? local.enabled_environment_names[0] : ""
+
+  environments_label = length(local.enabled_environment_names) > 0 ? join(", ", local.enabled_environment_names) : "none"
+
+  base_tags = {
+    Name         = local.ami_base_with_suffix
+    built_with   = "packer"
+    managed_by   = "omsf-ami-builder"
+    environment  = local.environments_label
+    environments = local.environments_label
+  }
+
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
 }
 
@@ -68,7 +97,7 @@ source "amazon-ebs" "this" {
   ssh_username = "ubuntu"
 
   ami_name        = local.ami_name
-  ami_description = "[OMSF] Ubuntu + NVIDIA + ${join(", ", var.installs)}"
+  ami_description = "[OMSF] Ubuntu + NVIDIA + environments: ${local.environments_label}"
 
   ami_groups = ["all"]
 
@@ -87,24 +116,23 @@ source "amazon-ebs" "this" {
   }
 
   aws_polling {
-    # large AMIs can take a while to become available
     max_attempts = 2000
   }
 
   run_tags = {
-    Name        = "ami-builder-${local.ami_base_with_suffix}"
-    template    = local.ami_base_with_suffix
-    environment = var.name
+    Name         = "ami-builder-${local.ami_base_with_suffix}"
+    template     = local.ami_base_with_suffix
+    environment  = local.environments_label
+    environments = local.environments_label
   }
 
   tags = local.merged_tags
 }
 
 build {
-  name    = "${var.name}-build"
+  name    = local.ami_base_with_suffix
   sources = ["source.amazon-ebs.this"]
 
-  ## Linux environment
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
@@ -115,32 +143,73 @@ build {
     ]
   }
 
-  ## NVIDIA drivers
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "set -euxo pipefail",
-
-
-      # Build deps for the DKMS driver module
       "sudo apt-get install -y --no-install-recommends build-essential dkms linux-headers-$(uname -r) pciutils",
-
       "sudo apt-get install -y --no-install-recommends nvidia-dkms-550 nvidia-utils-550 nvidia-driver-550",
-
       "sudo systemctl enable nvidia-persistenced || true",
     ]
   }
 
-  ## Micromamba environment
+  ## Micromamba environments
   provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
+  }
+
+  # copy over environment files and scripts
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "sudo rm -rf \"${local.remote_environment_root}\"",
+    ]
+  }
+
+  provisioner "file" {
+    source      = "environments"
+    destination = "/tmp"
+  }
+
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "if [ -d \"${local.remote_environment_root}\" ]; then",
+      "  sudo chown -R ubuntu:ubuntu \"${local.remote_environment_root}\"",
+      "fi",
+    ]
+  }
+
+  # error handling
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euo pipefail",
+      "missing=\"${join(" ", local.missing_environment_names)}\"",
+      "if [ -n \"$missing\" ]; then",
+      "  echo \"[ami-builder] Missing environment directories for: $missing\" >&2",
+      "  exit 1",
+      "fi",
+      "if [ -z \"${local.environment_dirs_string}\" ]; then",
+      "  echo \"[ami-builder] No environments resolved from configuration.\" >&2",
+      "  exit 1",
+      "fi",
+      "for env_dir in ${local.environment_dirs_string}; do",
+      "  if [ ! -f \"$env_dir/environment.yaml\" ]; then",
+      "    echo \"[ami-builder] Expected environment file $env_dir/environment.yaml not found\" >&2",
+      "    exit 1",
+      "  fi",
+      "done",
+    ]
   }
 
   provisioner "shell" {
     script = "build-scripts/setup-env.sh"
     environment_vars = [
-      "MICROMAMBA_PACKAGES=${join(" ", var.installs)}",
-      "MICROMAMBA_ENV_NAME=${var.name}",
+      "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
+      "DEFAULT_ENVIRONMENT=${local.default_environment}",
     ]
   }
 
@@ -159,14 +228,14 @@ build {
   }
 
   provisioner "file" {
-    source      = "smoke-tests/${var.name}.sh"
-    destination = "/tmp/smoke-tests/${var.name}.sh"
+    source      = "smoke-tests/${local.default_environment}.sh"
+    destination = "/tmp/smoke-tests/${local.default_environment}.sh"
   }
 
   provisioner "shell" {
     script = "build-scripts/smoke-test.sh"
     environment_vars = [
-      "MICROMAMBA_ENV_NAME=${var.name}",
+      "MICROMAMBA_ENV_NAME=${local.default_environment}",
     ]
   }
 }
