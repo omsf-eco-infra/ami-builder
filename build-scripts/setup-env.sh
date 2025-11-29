@@ -4,28 +4,50 @@ set -euo pipefail
 # micromamba root prefix
 MAMBA_ROOT_PREFIX="/opt/micromamba"
 
-if [[ -z "${MICROMAMBA_ENV_NAME:-}" ]]; then
-  echo "[setup_env] MICROMAMBA_ENV_NAME must be set" >&2
+if [[ -z "${ENVIRONMENT_DIRS:-}" ]]; then
+  echo "[setup_env] ENVIRONMENT_DIRS must be set" >&2
   exit 1
 fi
 
-if [[ -z "${MICROMAMBA_PACKAGES+x}" ]]; then
-  echo "[setup_env] MICROMAMBA_PACKAGES must be set" >&2
+if [[ -z "${DEFAULT_ENVIRONMENT:-}" ]]; then
+  echo "[setup_env] DEFAULT_ENVIRONMENT must be set" >&2
   exit 1
 fi
 
-packages="${MICROMAMBA_PACKAGES}"
-read -r -a package_args <<< "$packages"
+read -r -a env_dirs <<< "${ENVIRONMENT_DIRS}"
 
-env_name="${MICROMAMBA_ENV_NAME}"
+if [[ ${#env_dirs[@]} -eq 0 ]]; then
+  echo "[setup_env] ENVIRONMENT_DIRS must include at least one directory" >&2
+  exit 1
+fi
 
-echo "[setup_env] Creating micromamba '${env_name}' env from conda-forge with packages: ${packages}"
+default_env_name="${DEFAULT_ENVIRONMENT}"
 
-# Create the environment as the ubuntu user
-sudo -u ubuntu env MAMBA_ROOT_PREFIX="$MAMBA_ROOT_PREFIX" /usr/local/bin/micromamba create -y \
-  -n "${env_name}" \
-  -c conda-forge \
-  "${package_args[@]}"
+default_env_found=false
+for env_dir in "${env_dirs[@]}"; do
+  [[ -z "${env_dir:-}" ]] && continue
+  env_dir="${env_dir%/}"
+  env_yaml="${env_dir}/environment.yaml"
+  env_basename="$(basename "${env_dir}")"
+
+  if [[ ! -f "${env_yaml}" ]]; then
+    echo "[setup_env] Missing environment.yaml for '${env_basename}' at ${env_yaml}" >&2
+    exit 1
+  fi
+
+  echo "[setup_env] Creating micromamba environment '${env_basename}' from ${env_yaml}"
+
+  sudo -u ubuntu env MAMBA_ROOT_PREFIX="$MAMBA_ROOT_PREFIX" /usr/local/bin/micromamba env create -y -f "${env_yaml}"
+
+  if [[ "${env_basename}" == "${default_env_name}" ]]; then
+    default_env_found=true
+  fi
+done
+
+if [[ "${default_env_found}" == false ]]; then
+  echo "[setup_env] DEFAULT_ENVIRONMENT '${default_env_name}' not found in ENVIRONMENT_DIRS" >&2
+  exit 1
+fi
 
 # Clean up caches to keep the image smaller
 sudo -u ubuntu env MAMBA_ROOT_PREFIX="$MAMBA_ROOT_PREFIX" /usr/local/bin/micromamba clean -a -y
@@ -42,7 +64,7 @@ EOF
 
 sudo chmod 644 /etc/profile.d/micromamba.sh
 
-echo "[setup_env] Enabling auto-activation of '${env_name}' for ubuntu user"
+echo "[setup_env] Enabling auto-activation of '${default_env_name}' for ubuntu user"
 
 # Ensure ubuntu's .profile exists and append an activation snippet if not already present
 sudo -u ubuntu touch /home/ubuntu/.profile
@@ -54,7 +76,7 @@ if [ -f /etc/profile.d/micromamba.sh ]; then
   source /etc/profile.d/micromamba.sh
 fi
 if command -v micromamba >/dev/null 2>&1; then
-  micromamba activate "${env_name}"
+  micromamba activate "${default_env_name}"
 fi
 # <<< micromamba auto-activation <<<
 EOF
