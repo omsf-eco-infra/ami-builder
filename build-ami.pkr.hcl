@@ -201,6 +201,10 @@ build {
       "    echo \"[ami-builder] Expected environment file $env_dir/environment.yaml not found\" >&2",
       "    exit 1",
       "  fi",
+      "  if [ ! -f \"$env_dir/smoke-tests.sh\" ]; then",
+      "    echo \"[ami-builder] Expected smoke test $env_dir/smoke-tests.sh not found\" >&2",
+      "    exit 1",
+      "  fi",
       "done",
     ]
   }
@@ -228,7 +232,7 @@ build {
   }
 
   provisioner "file" {
-    source      = "smoke-tests/${local.default_environment}.sh"
+    source      = "environments/${local.default_environment}/smoke-tests.sh"
     destination = "/tmp/smoke-tests/${local.default_environment}.sh"
   }
 

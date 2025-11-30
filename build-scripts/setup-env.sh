@@ -36,6 +36,13 @@ for env_dir in "${env_dirs[@]}"; do
     exit 1
   fi
 
+  smoke_test="${env_dir}/smoke-tests.sh"
+  if [[ ! -f "${smoke_test}" ]]; then
+    echo "[setup_env] Missing smoke-tests.sh for '${env_basename}' at ${smoke_test}" >&2
+    exit 1
+  fi
+  echo "[setup_env] Found smoke test script for '${env_basename}' at ${smoke_test}"
+
   echo "[setup_env] Creating micromamba environment '${env_basename}' from ${env_yaml}"
 
   sudo -u ubuntu env MAMBA_ROOT_PREFIX="$MAMBA_ROOT_PREFIX" /usr/local/bin/micromamba env create -y -f "${env_yaml}"
