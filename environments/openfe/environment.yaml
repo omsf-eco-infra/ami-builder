@@ -1,0 +1,5 @@
+name: openfe
+channels:
+  - conda-forge
+dependencies:
+  - openfe

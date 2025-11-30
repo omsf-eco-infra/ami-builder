@@ -222,24 +222,15 @@ build {
     script = "build-scripts/nvidia-smoke-test.sh"
   }
 
-  provisioner "shell" {
-    inline_shebang = "/usr/bin/env bash"
-    inline = [
-      "set -euxo pipefail",
-      "sudo mkdir -p /tmp/smoke-tests",
-      "sudo chown ubuntu:ubuntu /tmp/smoke-tests",
-    ]
-  }
-
-  provisioner "file" {
-    source      = "environments/${local.default_environment}/smoke-tests.sh"
-    destination = "/tmp/smoke-tests/${local.default_environment}.sh"
-  }
-
-  provisioner "shell" {
-    script = "build-scripts/smoke-test.sh"
-    environment_vars = [
-      "MICROMAMBA_ENV_NAME=${local.default_environment}",
-    ]
+  dynamic "provisioner" {
+    for_each = local.enabled_environment_names
+    labels   = ["shell"]
+    content {
+      script = "build-scripts/smoke-test.sh"
+      environment_vars = [
+        "MICROMAMBA_ENV_NAME=${provisioner.value}",
+      ]
+      execute_command = "chmod +x {{ .Path }}; {{ .Vars }} {{ .Path }} ${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh"
+    }
   }
 }
