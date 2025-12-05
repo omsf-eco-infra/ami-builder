@@ -58,14 +58,53 @@ locals {
   enabled_environment_names        = sort(distinct(local.normalized_environment_names))
   missing_environment_names        = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
 
-  remote_environment_root = "/tmp/environments"
+  environment_smoke_scripts = {
+    for path in fileset(path.root, "environments/*/smoke-tests.sh") :
+    basename(dirname(path)) => path
+  }
 
-  environment_directories = [for env in local.enabled_environment_names : "${local.remote_environment_root}/${env}"]
-  environment_dirs_string = trimspace(join(" ", local.environment_directories))
+  environment_full_scripts = {
+    for path in fileset(path.root, "environments/*/full-tests.sh") :
+    basename(dirname(path)) => path
+  }
+
+  environment_matrix = [
+    for env in local.enabled_environment_names : {
+      name         = env
+      smoke_script = trimspace(lookup(local.environment_smoke_scripts, env, ""))
+      full_script  = trimspace(lookup(local.environment_full_scripts, env, ""))
+    }
+  ]
+
+  environment_matrix_json = jsonencode(local.environment_matrix)
+
+  missing_smoke_scripts = [
+    for item in local.environment_matrix : item.name
+    if length(item.smoke_script) == 0
+  ]
+
+  missing_full_scripts = [
+    for item in local.environment_matrix : item.name
+    if length(item.full_script) == 0
+  ]
 
   default_environment = length(local.enabled_environment_names) > 0 ? local.enabled_environment_names[0] : ""
 
   environments_label = length(local.enabled_environment_names) > 0 ? join(", ", local.enabled_environment_names) : "none"
+
+  build_metadata = {
+    ami_base_name        = local.ami_base_name
+    ami_base_with_suffix = local.ami_base_with_suffix
+    ami_name             = local.ami_name
+    default_environment  = local.default_environment
+    environments_label   = local.environments_label
+    environment_matrix   = local.environment_matrix_json
+  }
+
+  remote_environment_root = "/tmp/environments"
+
+  environment_directories = [for env in local.enabled_environment_names : "${local.remote_environment_root}/${env}"]
+  environment_dirs_string = trimspace(join(" ", local.environment_directories))
 
   base_tags = {
     Name         = local.ami_base_with_suffix
@@ -182,30 +221,14 @@ build {
     ]
   }
 
-  # error handling
+  # environment validation
   provisioner "shell" {
-    inline_shebang = "/usr/bin/env bash"
-    inline = [
-      "set -euo pipefail",
-      "missing=\"${join(" ", local.missing_environment_names)}\"",
-      "if [ -n \"$missing\" ]; then",
-      "  echo \"[ami-builder] Missing environment directories for: $missing\" >&2",
-      "  exit 1",
-      "fi",
-      "if [ -z \"${local.environment_dirs_string}\" ]; then",
-      "  echo \"[ami-builder] No environments resolved from configuration.\" >&2",
-      "  exit 1",
-      "fi",
-      "for env_dir in ${local.environment_dirs_string}; do",
-      "  if [ ! -f \"$env_dir/environment.yaml\" ]; then",
-      "    echo \"[ami-builder] Expected environment file $env_dir/environment.yaml not found\" >&2",
-      "    exit 1",
-      "  fi",
-      "  if [ ! -f \"$env_dir/smoke-tests.sh\" ]; then",
-      "    echo \"[ami-builder] Expected smoke test $env_dir/smoke-tests.sh not found\" >&2",
-      "    exit 1",
-      "  fi",
-      "done",
+    script = "build-scripts/validate-environments.sh"
+    environment_vars = [
+      "MISSING_ENVIRONMENTS=${join(" ", local.missing_environment_names)}",
+      "MISSING_SMOKE=${join(" ", local.missing_smoke_scripts)}",
+      "MISSING_FULL=${join(" ", local.missing_full_scripts)}",
+      "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
     ]
   }
 
@@ -232,5 +255,10 @@ build {
       ]
       execute_command = "chmod +x {{ .Path }}; {{ .Vars }} {{ .Path }} ${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh"
     }
+  }
+
+  post-processor "manifest" {
+    output      = "packer-manifest.json"
+    custom_data = local.build_metadata
   }
 }

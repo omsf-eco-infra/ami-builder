@@ -1,6 +1,8 @@
 # Local .terraform directories
 .terraform/
 
+packer-manifest.json
+
 # .tfstate files
 *.tfstate
 *.tfstate.*

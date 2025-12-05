@@ -11,9 +11,11 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  DEFAULT_INSTANCE_TYPE: g5.xlarge
 
 jobs:
   build-ami:
+    name: Build AMI (${{ matrix.project }})
     strategy:
       fail-fast: false
       matrix:
@@ -22,7 +24,9 @@ jobs:
     env:
       PROJECT: ${{ matrix.project }}
     outputs:
-      ami_id: ${{ steps.packer.outputs.ami_id }}
+      ami_id: ${{ steps.collect.outputs.ami_id }}
+      ami_name: ${{ steps.collect.outputs.ami_name }}
+      environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -71,134 +75,70 @@ jobs:
           packer_version: latest
 
       - name: Build AMI
-        id: packer
         env:
           AMI_NAME_SUFFIX: ${{ steps.metadata.outputs.ami_name_suffix }}
           ADDITIONAL_TAGS: ${{ steps.metadata.outputs.additional_tags }}
         run: |
           set -euo pipefail
           packer init build-ami.pkr.hcl
-          packer build -machine-readable \
+          packer build \
             -var-file "${PROJECT}.pkrvars.hcl" \
             -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
             -var "additional_tags=${ADDITIONAL_TAGS}" \
             build-ami.pkr.hcl | tee packer-output.log
-          python - <<'PY'
-          import csv
-          import os
-
-          ami_id = None
-          with open("packer-output.log", newline="", encoding="utf-8") as log_file:
-              reader = csv.reader(log_file)
-              for row in reader:
-                  if len(row) >= 6 and row[2] == "artifact" and row[3] == "0" and row[4] == "id":
-                      value = row[5].strip()
-                      if not value:
-                          continue
-                      candidate = value.split(":", 1)[-1].strip()
-                      if candidate:
-                          ami_id = candidate
-                          break
-
-          if not ami_id:
-              raise SystemExit("AMI ID not found in packer output")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as github_output:
-              github_output.write(f"ami_id={ami_id}\n")
-
-          print(f"Built AMI: {ami_id}")
-          PY
         shell: bash
 
-  test-ami:
-    name: Launch and test AMI
+      - name: Collect packer manifest outputs
+        id: collect
+        run: |
+          set -euo pipefail
+          manifest_path="packer-manifest.json"
+          if [ ! -f "$manifest_path" ]; then
+            echo "Packer manifest not found at $manifest_path" >&2
+            ls -al
+            exit 1
+          fi
+          ami_id=$(jq -r '.builds[0].artifact_id // empty' "$manifest_path")
+          if [ -z "$ami_id" ]; then
+            echo "AMI artifact identifier missing from manifest" >&2
+            exit 1
+          fi
+          ami_id=${ami_id##*:}
+          ami_name=$(jq -r '.builds[0].custom_data.ami_base_name // ""' "$manifest_path")
+          matrix=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
+          if [ -z "$matrix" ] || [ "$matrix" = "null" ]; then
+            echo "Environment matrix missing from manifest" >&2
+            exit 1
+          fi
+          if ! echo "$matrix" | jq -e . >/dev/null; then
+            echo "Environment matrix is not valid JSON" >&2
+            exit 1
+          fi
+          echo "ami_id=$ami_id" >> "$GITHUB_OUTPUT"
+          echo "ami_name=$ami_name" >> "$GITHUB_OUTPUT"
+          echo "environment_matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Collected packer metadata:"
+          jq '.builds[0].custom_data' "$manifest_path"
+
+  test-environment:
+    name: Test environment (${{ matrix.environment.name }})
     needs: build-ami
     if: ${{ needs.build-ami.outputs.ami_id != '' }}
-    runs-on: ubuntu-latest
-    env:
-      AMI_ID: ${{ needs.build-ami.outputs.ami_id }}
-      INSTANCE_TYPE: g5.xlarge
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate AMI ID output
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${AMI_ID:-}" ]]; then
-            echo "AMI_ID output from build-ami job is empty" >&2
-            exit 1
-          fi
-
-      - name: Configure AWS credentials for testing
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
-          role-session-name: gha-ami-test
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Launch test instance
-        id: launch
-        shell: bash
-        env:
-          SECURITY_GROUP_ID: ${{ secrets.TEST_MAIN_SECURITY_GROUP_ID }}
-          INSTANCE_PROFILE_NAME: ${{ secrets.TEST_MAIN_INSTANCE_PROFILE_NAME }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${SECURITY_GROUP_ID:-}" ]]; then
-            echo "TEST_MAIN_SECURITY_GROUP_ID secret not configured" >&2
-            exit 1
-          fi
-          if [[ -z "${INSTANCE_PROFILE_NAME:-}" ]]; then
-            echo "TEST_MAIN_INSTANCE_PROFILE_NAME secret not configured" >&2
-            exit 1
-          fi
-          tmp_output="$(mktemp)"
-          cleanup_tmp() {
-            rm -f "${tmp_output}"
-          }
-          trap cleanup_tmp EXIT
-          ./test-scripts/launch_instance.sh \
-            --ami "${AMI_ID}" \
-            --instance-type "${INSTANCE_TYPE}" \
-            --security-group "${SECURITY_GROUP_ID}" \
-            --iam-profile "${INSTANCE_PROFILE_NAME}" \
-            --wait-timeout 1200 \
-            --tag "Purpose=ami-test" \
-            --tag "Workflow=push.yaml" \
-            --tag "Commit=${GITHUB_SHA}" \
-            --tag "Run=${GITHUB_RUN_ID}" | tee "${tmp_output}"
-          instance_id="$(awk '/\[launch_instance\] InstanceId:/ { id=$NF } END { if (id) print id }' "${tmp_output}")"
-          if [[ -z "${instance_id}" || ! "${instance_id}" =~ ^i-[0-9a-f]{17}$ ]]; then
-            echo "Failed to capture instance ID from launch_instance.sh output" >&2
-            exit 1
-          fi
-          echo "[test-ami] Launch script reported instance ${instance_id}"
-          echo "instance_id=${instance_id}" >> "$GITHUB_OUTPUT"
-
-      - name: Run AMI validation via SSM
-        if: ${{ steps.launch.outputs.instance_id != '' }}
-        shell: bash
-        env:
-          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
-          LOG_GROUP_NAME: ${{ secrets.TEST_MAIN_LOG_GROUP_NAME }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${LOG_GROUP_NAME:-}" ]]; then
-            echo "LOG_GROUP_NAME secret not configured" >&2
-            exit 1
-          fi
-          ./test-scripts/run_tests_ssm.sh \
-            --instance "${INSTANCE_ID}" \
-            --script ./full-tests/openfe.sh \
-            --log-group "${LOG_GROUP_NAME}" \
-            --comment "AMI validation (${GITHUB_RUN_ID})"
-
-      - name: Terminate test instance
-        if: ${{ always() && steps.launch.outputs.instance_id != '' }}
-        shell: bash
-        env:
-          INSTANCE_ID: ${{ steps.launch.outputs.instance_id }}
-        run: |
-          set -euo pipefail
-          ./test-scripts/cleanup_instance.sh --instance "${INSTANCE_ID}"
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.build-ami.outputs.environment_matrix) }}
+    uses: ./.github/workflows/test-ami-reusable.yml
+    with:
+      ami_id: ${{ needs.build-ami.outputs.ami_id }}
+      ami_name: ${{ needs.build-ami.outputs.ami_name }}
+      environment_name: ${{ matrix.environment.name }}
+      smoke_test_script: ${{ matrix.environment.smoke_script }}
+      full_test_script: ${{ matrix.environment.full_script }}
+      instance_type: ${{ env.DEFAULT_INSTANCE_TYPE }}
+      region: ${{ env.AWS_REGION }}
+    secrets:
+      test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
+      test_security_group_id: ${{ secrets.TEST_MAIN_SECURITY_GROUP_ID }}
+      test_instance_profile_name: ${{ secrets.TEST_MAIN_INSTANCE_PROFILE_NAME }}
+      test_log_group_name: ${{ secrets.TEST_MAIN_LOG_GROUP_NAME }}
