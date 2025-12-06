@@ -11,8 +11,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SMOKE_TEST_BASENAME="${MICROMAMBA_ENV_NAME}.sh"
-DEFAULT_SMOKE_TEST="/tmp/smoke-tests/${SMOKE_TEST_BASENAME}"
+TEST_ROOT="/tmp/environments/${MICROMAMBA_ENV_NAME}"
+DEFAULT_SMOKE_TEST="${TEST_ROOT}/smoke-tests.sh"
 
 SMOKE_TEST="${1:-$DEFAULT_SMOKE_TEST}"
 if [[ "$SMOKE_TEST" != /* ]]; then

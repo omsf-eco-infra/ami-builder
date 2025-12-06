@@ -1,0 +1,287 @@
+name: Reusable AMI environment test
+
+on:
+  workflow_call:
+    inputs:
+      ami_id:
+        description: AMI ID to test.
+        required: true
+        type: string
+      ami_name:
+        description: Logical name of the AMI (for tagging and logging).
+        required: false
+        type: string
+        default: ""
+      environment_name:
+        description: Micromamba environment name to validate.
+        required: true
+        type: string
+      full_test_script:
+        description: Repository-relative path to the full test script.
+        required: true
+        type: string
+      full_test_timeout:
+        description: Optional timeout override (seconds) for the full test.
+        required: false
+        type: number
+        default: 0
+      instance_type:
+        description: EC2 instance type to launch for testing.
+        required: false
+        type: string
+        default: g5.xlarge
+      subnet_id:
+        description: Optional subnet ID for the test instance.
+        required: false
+        type: string
+        default: ""
+      region:
+        description: AWS region to use for all API calls.
+        required: false
+        type: string
+        default: us-east-1
+      instance_wait_timeout:
+        description: Seconds to wait for instance status checks to pass.
+        required: false
+        type: number
+        default: 1200
+      ssm_timeout:
+        description: Default SSM command timeout (seconds) applied when per-test overrides are not provided.
+        required: false
+        type: number
+        default: 3600
+      ssm_poll_interval:
+        description: Seconds between SSM status polls.
+        required: false
+        type: number
+        default: 5
+      cleanup_wait_timeout:
+        description: Seconds to wait for instance termination during cleanup.
+        required: false
+        type: number
+        default: 600
+    secrets:
+      test_assume_role_arn:
+        required: true
+      test_security_group_id:
+        required: true
+      test_instance_profile_name:
+        required: true
+      test_log_group_name:
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  WORKFLOW_PURPOSE: ami-environment-test
+
+outputs:
+  ami_id:
+    description: The AMI ID that was tested.
+    value: ${{ inputs.ami_id }}
+  environment_name:
+    description: The micromamba environment that was validated.
+    value: ${{ inputs.environment_name }}
+  instance_id:
+    description: The EC2 instance launched for testing (if any).
+    value: ${{ jobs.start_instance.outputs.instance_id }}
+
+jobs:
+  start_instance:
+    name: Launch test instance
+    runs-on: ubuntu-latest
+    outputs:
+      instance_id: ${{ steps.launch.outputs.instance_id }}
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.test_assume_role_arn }}
+          role-session-name: gha-ami-test-start
+          aws-region: ${{ inputs.region }}
+
+      - name: Launch test instance
+        id: launch
+        env:
+          AMI_ID: ${{ inputs.ami_id }}
+          AMI_NAME: ${{ inputs.ami_name }}
+          INSTANCE_TYPE: ${{ inputs.instance_type }}
+          SECURITY_GROUP_ID: ${{ secrets.test_security_group_id }}
+          INSTANCE_PROFILE_NAME: ${{ secrets.test_instance_profile_name }}
+          SUBNET_INPUT: ${{ inputs.subnet_id }}
+          WAIT_TIMEOUT: ${{ inputs.instance_wait_timeout }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          subnet="${SUBNET_INPUT:-}"
+
+          args=(
+            --ami "${AMI_ID}"
+            --instance-type "${INSTANCE_TYPE}"
+            --security-group "${SECURITY_GROUP_ID}"
+            --iam-profile "${INSTANCE_PROFILE_NAME}"
+            --wait-timeout "${WAIT_TIMEOUT}"
+            --tag "Purpose=${WORKFLOW_PURPOSE}"
+            --tag "Workflow=${WORKFLOW_NAME}"
+            --tag "Run=${RUN_ID}"
+            --tag "Attempt=${RUN_ATTEMPT}"
+            --tag "Environment=${ENVIRONMENT_NAME}"
+            --tag "AmiId=${AMI_ID}"
+          )
+
+          if [[ -n "${AMI_NAME:-}" ]]; then
+            args+=(--tag "AmiName=${AMI_NAME}")
+          fi
+
+          if [[ -n "${subnet}" ]]; then
+            args+=(--subnet "${subnet}")
+          fi
+
+          ./test-scripts/launch_instance.sh "${args[@]}" | tee launch.log
+
+          instance_id="$(awk '/^\[launch_instance\] InstanceId:/ { id=$NF } END { if (id != "") print id }' launch.log)"
+          if [[ -z "${instance_id}" ]]; then
+            instance_id="$(grep -Eo 'i-[0-9a-f]{17}' launch.log | tail -n1 | tr -d '\r')"
+          fi
+
+          rm -f launch.log
+
+          if [[ -z "${instance_id}" ]]; then
+            echo "[start_instance] Failed to capture instance ID from launch output" >&2
+            exit 1
+          fi
+
+          echo "[start_instance] Instance ID: ${instance_id}"
+          printf 'instance_id=%s\n' "${instance_id}" >> "${GITHUB_OUTPUT}"
+
+  tests:
+    name: Execute environment tests
+    needs: start_instance
+    if: ${{ needs.start_instance.outputs.instance_id != '' }}
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.test_assume_role_arn }}
+          role-session-name: gha-ami-test-execute
+          aws-region: ${{ inputs.region }}
+
+      - name: Run full test via SSM
+        id: execute
+        env:
+          INSTANCE_ID: ${{ needs.start_instance.outputs.instance_id }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          AMI_ID: ${{ inputs.ami_id }}
+          AMI_NAME: ${{ inputs.ami_name }}
+          LOG_GROUP_NAME: ${{ secrets.test_log_group_name }}
+          FULL_TEST_SCRIPT: ${{ inputs.full_test_script }}
+          FULL_TEST_TIMEOUT: ${{ inputs.full_test_timeout }}
+          SSM_TIMEOUT: ${{ inputs.ssm_timeout }}
+          SSM_POLL_INTERVAL: ${{ inputs.ssm_poll_interval }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${INSTANCE_ID:-}" ]]; then
+            echo "[tests] Instance ID is empty" >&2
+            exit 1
+          fi
+
+          script_input="${FULL_TEST_SCRIPT:-}"
+          if [[ -z "${script_input}" ]]; then
+            echo "[tests] Full test script input is required" >&2
+            exit 1
+          fi
+
+          if [[ "${script_input}" = /* ]]; then
+            script_path="${script_input}"
+          else
+            script_path="${GITHUB_WORKSPACE}/${script_input}"
+          fi
+
+          if [[ ! -f "${script_path}" ]]; then
+            echo "[tests] Full test script not found at '${script_path}'" >&2
+            exit 1
+          fi
+
+          if [[ -z "${LOG_GROUP_NAME:-}" ]]; then
+            echo "[tests] CloudWatch Logs group secret is empty" >&2
+            exit 1
+          fi
+
+          default_timeout="${SSM_TIMEOUT:-3600}"
+
+          timeout_override="${FULL_TEST_TIMEOUT:-0}"
+          if (( timeout_override > 0 )); then
+            timeout_value="${timeout_override}"
+          else
+            timeout_value="${default_timeout}"
+          fi
+
+          poll_interval="${SSM_POLL_INTERVAL:-5}"
+
+
+          comment_base="Reusable AMI test (${ENVIRONMENT_NAME})"
+          if [[ -n "${AMI_NAME:-}" ]]; then
+            comment_base="Reusable AMI test (${AMI_NAME}/${ENVIRONMENT_NAME})"
+          fi
+          comment="${comment_base} [full]"
+
+          echo "[tests] Running full test script '${script_path}' with timeout ${timeout_value}s"
+
+          ./test-scripts/run_tests_ssm.sh \
+            --instance "${INSTANCE_ID}" \
+            --script "${script_path}" \
+            --log-group "${LOG_GROUP_NAME}" \
+            --env-cmd "source /etc/profile.d/micromamba.sh && micromamba activate ${ENVIRONMENT_NAME}" \
+            --timeout "${timeout_value}" \
+            --poll-interval "${poll_interval}" \
+            --comment "${comment}"
+
+  cleanup:
+    name: Terminate test instance
+    needs:
+      - start_instance
+      - tests
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ inputs.region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.test_assume_role_arn }}
+          role-session-name: gha-ami-test-cleanup
+          aws-region: ${{ inputs.region }}
+
+      - name: Terminate instance
+        if: ${{ needs.start_instance.outputs.instance_id != '' }}
+        env:
+          INSTANCE_ID: ${{ needs.start_instance.outputs.instance_id }}
+          CLEANUP_TIMEOUT: ${{ inputs.cleanup_wait_timeout }}
+        run: |
+          set -euo pipefail
+          ./test-scripts/cleanup_instance.sh \
+            --instance "${INSTANCE_ID}" \
+            --wait-timeout "${CLEANUP_TIMEOUT}"

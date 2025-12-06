@@ -1,2 +1,2 @@
-name     = "openfe"
-installs = ["openfe"]
+ami_name = "openfe"
+environments = ["openfe"]

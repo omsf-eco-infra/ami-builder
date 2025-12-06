@@ -75,6 +75,13 @@ build_tag_spec() {
   local resource_type="$1"
   local first=1
   local tag_str=""
+
+  # If no tags, return empty tag specification
+  if [[ ${#TAGS[@]} -eq 0 ]]; then
+    printf "ResourceType=%s,Tags=[]" "$resource_type"
+    return
+  fi
+
   for tag in "${TAGS[@]}"; do
     [[ "$tag" == *=* ]] || fail "Tag must be Key=Value: '$tag'"
     local key="${tag%%=*}"
@@ -105,9 +112,13 @@ RUN_ARGS=(
   --instance-type "$INSTANCE_TYPE"
   --security-group-ids "$SECURITY_GROUP_ID"
   --iam-instance-profile "$(iam_profile_arg)"
-  --tag-specifications "$TAG_SPEC_INSTANCE" "$TAG_SPEC_VOLUME"
   --output json
 )
+
+# Only add tag specifications if we have tags
+if [[ ${#TAGS[@]} -gt 0 ]]; then
+  RUN_ARGS+=(--tag-specifications "$TAG_SPEC_INSTANCE" "$TAG_SPEC_VOLUME")
+fi
 
 if [[ -n "$SUBNET_ID" ]]; then
   RUN_ARGS+=(--subnet-id "$SUBNET_ID")
