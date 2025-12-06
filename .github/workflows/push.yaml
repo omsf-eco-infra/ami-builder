@@ -27,8 +27,21 @@ jobs:
       ami_id: ${{ steps.collect.outputs.ami_id }}
       ami_name: ${{ steps.collect.outputs.ami_name }}
       environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
+      aws_region: ${{ steps.config.outputs.aws_region }}
+      default_instance_type: ${{ steps.config.outputs.default_instance_type }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Export shared config
+        id: config
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          DEFAULT_INSTANCE_TYPE: ${{ env.DEFAULT_INSTANCE_TYPE }}
+        run: |
+          {
+            echo "aws_region=${AWS_REGION}"
+            echo "default_instance_type=${DEFAULT_INSTANCE_TYPE}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -134,8 +147,8 @@ jobs:
       ami_name: ${{ needs.build-ami.outputs.ami_name }}
       environment_name: ${{ matrix.environment.name }}
       full_test_script: ${{ matrix.environment.full_script }}
-      instance_type: ${{ env.DEFAULT_INSTANCE_TYPE }}
-      region: ${{ env.AWS_REGION }}
+      instance_type: ${{ needs.build-ami.outputs.default_instance_type }}
+      region: ${{ needs.build-ami.outputs.aws_region }}
     secrets:
       test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
       test_security_group_id: ${{ secrets.TEST_MAIN_SECURITY_GROUP_ID }}

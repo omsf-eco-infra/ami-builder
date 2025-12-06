@@ -69,6 +69,16 @@ on:
         required: true
       test_log_group_name:
         required: true
+    outputs:
+      ami_id:
+        description: The AMI ID that was tested.
+        value: ${{ inputs.ami_id }}
+      environment_name:
+        description: The micromamba environment that was validated.
+        value: ${{ inputs.environment_name }}
+      instance_id:
+        description: The EC2 instance launched for testing (if any).
+        value: ${{ jobs.start_instance.outputs.instance_id }}
 
 defaults:
   run:
@@ -76,17 +86,6 @@ defaults:
 
 env:
   WORKFLOW_PURPOSE: ami-environment-test
-
-outputs:
-  ami_id:
-    description: The AMI ID that was tested.
-    value: ${{ inputs.ami_id }}
-  environment_name:
-    description: The micromamba environment that was validated.
-    value: ${{ inputs.environment_name }}
-  instance_id:
-    description: The EC2 instance launched for testing (if any).
-    value: ${{ jobs.start_instance.outputs.instance_id }}
 
 jobs:
   start_instance:
