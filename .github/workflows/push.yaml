@@ -133,7 +133,6 @@ jobs:
       ami_id: ${{ needs.build-ami.outputs.ami_id }}
       ami_name: ${{ needs.build-ami.outputs.ami_name }}
       environment_name: ${{ matrix.environment.name }}
-      smoke_test_script: ${{ matrix.environment.smoke_script }}
       full_test_script: ${{ matrix.environment.full_script }}
       instance_type: ${{ env.DEFAULT_INSTANCE_TYPE }}
       region: ${{ env.AWS_REGION }}

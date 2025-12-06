@@ -27,6 +27,11 @@ variable "environments" {
   description = "Ordered list of environment directory names (under environments/) to include. Empty list means auto-discover all."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = alltrue([for env in var.environments : length(trimspace(env)) > 0 && can(regex("^[A-Za-z0-9_.-]+$", trimspace(env)))])
+    error_message = "Environments must contain non-empty names using only letters, numbers, dot, underscore, or hyphen."
+  }
 }
 
 variable "ami_name_suffix" {
@@ -110,7 +115,6 @@ locals {
     Name         = local.ami_base_with_suffix
     built_with   = "packer"
     managed_by   = "omsf-ami-builder"
-    environment  = local.environments_label
     environments = local.environments_label
   }
 
@@ -161,7 +165,6 @@ source "amazon-ebs" "this" {
   run_tags = {
     Name         = "ami-builder-${local.ami_base_with_suffix}"
     template     = local.ami_base_with_suffix
-    environment  = local.environments_label
     environments = local.environments_label
   }
 
@@ -253,7 +256,7 @@ build {
       environment_vars = [
         "MICROMAMBA_ENV_NAME=${provisioner.value}",
       ]
-      execute_command = "chmod +x {{ .Path }}; {{ .Vars }} {{ .Path }} ${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh"
+      execute_command = "chmod +x '{{ .Path }}'; {{ .Vars }} '{{ .Path }}' '${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh'"
     }
   }
 

@@ -7,6 +7,7 @@ missing_envs="${MISSING_ENVIRONMENTS:-}"
 missing_smoke="${MISSING_SMOKE:-}"
 missing_full="${MISSING_FULL:-}"
 env_dirs_var="${ENVIRONMENT_DIRS:-}"
+env_dirs=()
 
 fail=false
 
@@ -25,15 +26,14 @@ if [[ -n "${missing_full// }" ]]; then
   fail=true
 fi
 
-if [[ -z "${env_dirs_var// }" ]]; then
-  echo "[validate_env] ENVIRONMENT_DIRS is empty after normalization" >&2
-  fail=true
+# Split ENVIRONMENT_DIRS on whitespace; handles repeated spaces gracefully.
+if [[ -n "${env_dirs_var// }" ]]; then
+  set -- ${env_dirs_var}
+  env_dirs=("$@")
 fi
 
-read -r -a env_dirs <<< "${env_dirs_var}"
-
 if [[ ${#env_dirs[@]} -eq 0 ]]; then
-  echo "[validate_env] ENVIRONMENT_DIRS did not expand to any directories" >&2
+  echo "[validate_env] ENVIRONMENT_DIRS is empty or whitespace-only" >&2
   fail=true
 fi
 

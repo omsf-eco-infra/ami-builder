@@ -1,2 +1,2 @@
 ami_name = "omsf"
-environments = []
+environments = []  # empty list means we build all environments
