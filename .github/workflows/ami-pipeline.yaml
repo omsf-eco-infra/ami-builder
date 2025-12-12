@@ -100,7 +100,7 @@ jobs:
               "omsf-ami-type": ami_type,
               "commit": short_sha,
               "delete-after": delete_after_date.strftime("%Y%m%d"),
-              "blessed": false,
+              "blessed": False,
           }
           tags.update(extra_tags)
           tags_json = json.dumps(tags)
