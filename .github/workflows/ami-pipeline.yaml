@@ -1,4 +1,4 @@
-name: Update AMI (push or manual)
+name: AMI Pipeline
 
 on:
   repository_dispatch:
