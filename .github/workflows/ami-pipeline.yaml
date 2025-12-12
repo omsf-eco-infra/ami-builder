@@ -1,14 +1,13 @@
 name: AMI Pipeline
 
 on:
-  repository_dispatch:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
   push:
     branches: [main]
   schedule:
-    - cron: "0 5 * * 1" # Mondays at 05:00 UTC
+    - cron: "0 12 * * 1"
 
 permissions:
   id-token: write
@@ -35,7 +34,7 @@ jobs:
       aws_region: ${{ steps.config.outputs.aws_region }}
       default_instance_type: ${{ steps.config.outputs.default_instance_type }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Export shared config
         id: config
@@ -72,43 +71,36 @@ jobs:
           today = now.strftime("%Y%m%d")
           full_sha = os.environ["GITHUB_SHA"]
           short_sha = full_sha[:7]
-          ami_type = "update"
           suffix = f"{today}-{short_sha}"
-          delete_after_date = None
           extra_tags = {}
 
           if event_name == "pull_request":
               ami_type = "pr"
+              days_to_live = 1
               pr_number = event.get("number")
               head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
               short_sha = head_sha[:7]
               suffix = f"pr{pr_number}-{today}-{short_sha}"
-              delete_after_date = now + datetime.timedelta(days=14)
               extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
-              extra_tags["commit"] = short_sha
           elif event_name == "schedule":
-              ami_type = "weekly"
-              suffix = f"weekly-{today}-{short_sha}"
-              delete_after_date = now + datetime.timedelta(days=60)
+              ami_type = "scheduled"
+              days_to_live = 7
           elif event_name == "workflow_dispatch":
               ami_type = "manual"
-              delete_after_date = now + datetime.timedelta(days=180)
-          elif event_name == "repository_dispatch":
-              ami_type = event.get("action") or "dispatch"
-              delete_after_date = now + datetime.timedelta(days=180)
+              days_to_live = 30
           elif event_name == "push":
-              ami_type = "update"
-              try:
-                  delete_after_date = now.replace(year=now.year + 1)
-              except ValueError:
-                  delete_after_date = now + datetime.timedelta(days=365)
+              ami_type = "push"
+              days_to_live = 30
           else:
               raise SystemExit(f"Unsupported event type for AMI metadata: {event_name}")
+
+          delete_after_date = now + datetime.timedelta(days=days_to_live)
 
           tags = {
               "omsf-ami-type": ami_type,
               "commit": short_sha,
               "delete-after": delete_after_date.strftime("%Y%m%d"),
+              "blessed": false,
           }
           tags.update(extra_tags)
           tags_json = json.dumps(tags)
