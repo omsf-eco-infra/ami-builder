@@ -66,7 +66,7 @@ variable "instance_profile_name" {
 variable "instance_profile_secret_name" {
   description = "GitHub Actions secret name that stores the AMI test instance profile name."
   type        = string
-  default     = "TEST_MAIN_INSTANCE_PROFILE_NAME"
+  default     = "TEST_INSTANCE_PROFILE_NAME"
 }
 
 variable "cloudwatch_log_group_name" {
@@ -78,7 +78,7 @@ variable "cloudwatch_log_group_name" {
 variable "cloudwatch_log_group_secret_name" {
   description = "GitHub Actions secret name that stores the AMI test CloudWatch Logs group name."
   type        = string
-  default     = "TEST_MAIN_LOG_GROUP_NAME"
+  default     = "TEST_LOG_GROUP_NAME"
 }
 
 variable "cloudwatch_log_group_retention_in_days" {
@@ -96,7 +96,7 @@ variable "security_group_name" {
 variable "security_group_secret_name" {
   description = "GitHub Actions secret name that stores the AMI test security group ID."
   type        = string
-  default     = "TEST_MAIN_SECURITY_GROUP_ID"
+  default     = "TEST_SECURITY_GROUP_ID"
 }
 
 variable "vpc_id" {

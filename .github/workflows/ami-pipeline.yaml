@@ -1,9 +1,13 @@
-name: Update AMI (push or manual)
+name: AMI Pipeline
 
 on:
-  repository_dispatch:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
+  schedule:
+    - cron: "0 12 * * 1"
 
 permissions:
   id-token: write
@@ -30,7 +34,7 @@ jobs:
       aws_region: ${{ steps.config.outputs.aws_region }}
       default_instance_type: ${{ steps.config.outputs.default_instance_type }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Export shared config
         id: config
@@ -59,28 +63,52 @@ jobs:
           import os
           from pathlib import Path
 
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
+              event = json.load(fp)
+
           now = datetime.datetime.utcnow()
           today = now.strftime("%Y%m%d")
           full_sha = os.environ["GITHUB_SHA"]
           short_sha = full_sha[:7]
           suffix = f"{today}-{short_sha}"
-          try:
-              next_year = now.replace(year=now.year + 1)
-          except ValueError:
-              next_year = now + datetime.timedelta(days=365)
-          deletion = next_year.strftime("%Y%m%d")
-          tags = json.dumps(
-              {
-                  "omsf-ami-type": "update",
-                  "commit": short_sha,
-                  "delete-after": deletion,
-              }
-          )
+          extra_tags = {}
+
+          if event_name == "pull_request":
+              ami_type = "pr"
+              days_to_live = 1
+              pr_number = event.get("number")
+              head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
+              short_sha = head_sha[:7]
+              suffix = f"pr{pr_number}-{today}-{short_sha}"
+              extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
+          elif event_name == "schedule":
+              ami_type = "scheduled"
+              days_to_live = 7
+          elif event_name == "workflow_dispatch":
+              ami_type = "manual"
+              days_to_live = 30
+          elif event_name == "push":
+              ami_type = "push"
+              days_to_live = 30
+          else:
+              raise SystemExit(f"Unsupported event type for AMI metadata: {event_name}")
+
+          delete_after_date = now + datetime.timedelta(days=days_to_live)
+
+          tags = {
+              "omsf-ami-type": ami_type,
+              "commit": short_sha,
+              "delete-after": delete_after_date.strftime("%Y%m%d"),
+              "blessed": False,
+          }
+          tags.update(extra_tags)
+          tags_json = json.dumps(tags)
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as github_output:
               github_output.write(f"ami_name_suffix={suffix}\n")
-              github_output.write(f"additional_tags={tags}\n")
+              github_output.write(f"additional_tags={tags_json}\n")
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
@@ -151,6 +179,6 @@ jobs:
       region: ${{ needs.build-ami.outputs.aws_region }}
     secrets:
       test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
-      test_security_group_id: ${{ secrets.TEST_MAIN_SECURITY_GROUP_ID }}
-      test_instance_profile_name: ${{ secrets.TEST_MAIN_INSTANCE_PROFILE_NAME }}
-      test_log_group_name: ${{ secrets.TEST_MAIN_LOG_GROUP_NAME }}
+      test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
+      test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
+      test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
