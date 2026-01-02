@@ -8,10 +8,6 @@ import click
 MANAGED_BY_VALUE = "omsf-ami-builder"
 
 
-def get_ec2_client():
-    return boto3.client("ec2")
-
-
 def tags_to_dict(resource):
     return {tag["Key"]: tag["Value"] for tag in resource.get("Tags", [])}
 
@@ -78,7 +74,7 @@ def cli():
 @cli.command("list")
 def list_managed_images():
     """List AMIs tagged with managed_by=omsf-ami-builder."""
-    client = get_ec2_client()
+    client = boto3.client("ec2")
     images = fetch_managed_images(client)
     if not images:
         click.echo("No AMIs found.")
@@ -92,7 +88,7 @@ def list_managed_images():
 @cli.command("list-expired")
 def list_expired():
     """List managed AMIs whose delete-after tag is before today."""
-    client = get_ec2_client()
+    client = boto3.client("ec2")
     images = fetch_managed_images(client)
     today = date.today()
 
@@ -121,7 +117,7 @@ def list_expired():
 )
 def delete_images(image_ids, delete_snapshots):
     """Delete AMIs by ID."""
-    client = get_ec2_client()
+    client = boto3.client("ec2")
     try:
         response = client.describe_images(ImageIds=list(image_ids))
     except botocore.exceptions.ClientError as exc:  # pragma: no cover
@@ -144,7 +140,7 @@ def auto_delete(force):
     Delete managed AMIs whose delete-after tag is before today.
     """
 
-    client = get_ec2_client()
+    client = boto3.client("ec2")
     images = fetch_managed_images(client)
     today = date.today()
 
