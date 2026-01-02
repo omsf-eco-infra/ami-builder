@@ -46,11 +46,16 @@ def get_expired_images(images, today):
     """
     Filter images to those with delete-after tags before the given date.
     
-    Args:
-        images: List of image dictionaries from AWS EC2 describe_images response.
-        today: date object representing the current date for comparison.
+    Parameters
+    ----------
+    images : list
+        List of image dictionaries from AWS EC2 describe_images response.
+    today : date
+        date object representing the current date for comparison.
     
-    Returns:
+    Returns
+    -------
+    list of tuple
         List of tuples (delete_after_date, image) for images that have expired.
     """
     expired = []
