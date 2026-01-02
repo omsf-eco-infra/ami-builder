@@ -115,6 +115,60 @@ def test_collect_snapshot_ids_collects_snapshot_ids():
     assert ami_cli.collect_snapshot_ids(image) == ["snap-1", "snap-2"]
 
 
+def test_get_expired_images_returns_empty_for_no_expired():
+    images = []
+    today = date(2024, 1, 15)
+    assert ami_cli.get_expired_images(images, today) == []
+
+
+def test_get_expired_images_filters_by_date():
+    images = [
+        {"ImageId": "ami-1", "Tags": [{"Key": "delete-after", "Value": "2024-01-10"}]},
+        {"ImageId": "ami-2", "Tags": [{"Key": "delete-after", "Value": "2024-01-20"}]},
+        {"ImageId": "ami-3", "Tags": [{"Key": "delete-after", "Value": "2024-01-05"}]},
+    ]
+    today = date(2024, 1, 15)
+    
+    result = ami_cli.get_expired_images(images, today)
+    
+    assert len(result) == 2
+    # Check that we got the right images (ami-1 and ami-3)
+    result_image_ids = {img["ImageId"] for _, img in result}
+    assert result_image_ids == {"ami-1", "ami-3"}
+    # Check that the dates are correct
+    assert result[0][0] in [date(2024, 1, 10), date(2024, 1, 5)]
+    assert result[1][0] in [date(2024, 1, 10), date(2024, 1, 5)]
+
+
+def test_get_expired_images_handles_missing_and_invalid_dates():
+    images = [
+        {"ImageId": "ami-1", "Tags": [{"Key": "delete-after", "Value": "2024-01-10"}]},
+        {"ImageId": "ami-2", "Tags": [{"Key": "other", "Value": "value"}]},  # no delete-after
+        {"ImageId": "ami-3", "Tags": [{"Key": "delete-after", "Value": "not-a-date"}]},  # invalid
+        {"ImageId": "ami-4"},  # no tags at all
+    ]
+    today = date(2024, 1, 15)
+    
+    result = ami_cli.get_expired_images(images, today)
+    
+    assert len(result) == 1
+    assert result[0][1]["ImageId"] == "ami-1"
+    assert result[0][0] == date(2024, 1, 10)
+
+
+def test_get_expired_images_excludes_future_dates():
+    images = [
+        {"ImageId": "ami-1", "Tags": [{"Key": "delete-after", "Value": "2024-01-20"}]},
+        {"ImageId": "ami-2", "Tags": [{"Key": "delete-after", "Value": "2024-01-15"}]},  # equal to today
+    ]
+    today = date(2024, 1, 15)
+    
+    result = ami_cli.get_expired_images(images, today)
+    
+    # Both should be excluded (one is future, one is equal to today)
+    assert len(result) == 0
+
+
 def test_format_image_line_handles_missing_fields():
     assert ami_cli.format_image_line({"ImageId": "ami-1"}) == "ami-1\t-\tdelete-after=-"
 
