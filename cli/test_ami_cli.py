@@ -83,6 +83,53 @@ def assert_snapshot_exists(ec2, snapshot_id):
     }
 
 
+def test_tags_to_dict_handles_missing_tags():
+    assert ami_cli.tags_to_dict({}) == {}
+
+
+def test_tags_to_dict_converts_tags_list():
+    resource = {"Tags": [{"Key": "one", "Value": "1"}, {"Key": "two", "Value": "2"}]}
+    assert ami_cli.tags_to_dict(resource) == {"one": "1", "two": "2"}
+
+
+def test_parse_delete_after_handles_blank_and_invalid():
+    assert ami_cli.parse_delete_after({}) is None
+    assert ami_cli.parse_delete_after({"delete-after": "not-a-date"}) is None
+
+
+def test_parse_delete_after_parses_iso_date():
+    assert ami_cli.parse_delete_after({"delete-after": "2024-01-15"}) == date(2024, 1, 15)
+
+
+def test_collect_snapshot_ids_handles_missing_data():
+    assert ami_cli.collect_snapshot_ids({}) == []
+    assert ami_cli.collect_snapshot_ids({"BlockDeviceMappings": [{"DeviceName": "/dev/xvda"}]}) == []
+
+
+def test_collect_snapshot_ids_collects_snapshot_ids():
+    image = {
+        "BlockDeviceMappings": [
+            {"Ebs": {"SnapshotId": "snap-1"}},
+            {"Ebs": {"SnapshotId": "snap-2"}},
+            {"DeviceName": "/dev/xvda"},
+        ]
+    }
+    assert ami_cli.collect_snapshot_ids(image) == ["snap-1", "snap-2"]
+
+
+def test_format_image_line_handles_missing_fields():
+    assert ami_cli.format_image_line({"ImageId": "ami-1"}) == "ami-1\t-\tdelete-after=-"
+
+
+def test_format_image_line_uses_tags_and_name():
+    image = {
+        "ImageId": "ami-2",
+        "Name": "test-image",
+        "Tags": [{"Key": "delete-after", "Value": "2024-02-01"}],
+    }
+    assert ami_cli.format_image_line(image) == "ami-2\ttest-image\tdelete-after=2024-02-01"
+
+
 @mock_aws
 def test_list_managed_images_shows_managed_only():
     ec2 = boto3.client("ec2", region_name="us-east-1")
