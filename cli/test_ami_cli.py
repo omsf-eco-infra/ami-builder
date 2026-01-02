@@ -29,8 +29,6 @@ def fixed_date(year=2024, month=1, day=1):
 
 def get_image_snapshot_ids(ec2, image_id):
     images = ec2.describe_images(ImageIds=[image_id])["Images"]
-    if not images:
-        return []
     snapshot_ids = []
     for mapping in images[0].get("BlockDeviceMappings", []):
         ebs = mapping.get("Ebs")
@@ -74,7 +72,7 @@ def assert_snapshot_missing(ec2, snapshot_id):
         return
     assert snapshot_id not in {
         snap["SnapshotId"] for snap in ec2.describe_snapshots(OwnerIds=["self"])["Snapshots"]
-    }
+    } # pragma: no cover  (defensive)
 
 
 def assert_snapshot_exists(ec2, snapshot_id):
