@@ -46,7 +46,7 @@ def get_expired_images(images, today):
     """
     Filter images to those with delete-after tags before the given date.
     
-    Returns a list of tuples (delete_after_date, image) sorted by delete_after date.
+    Returns a list of tuples (delete_after_date, image).
     """
     expired = []
     for image in images:
