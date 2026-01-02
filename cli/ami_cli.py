@@ -49,7 +49,7 @@ def format_image_line(image):
     return f"{image['ImageId']}\t{name}\tdelete-after={delete_after}"
 
 
-def delete_image(client, image, delete_snapshots=False):
+def delete_image(client, image, delete_snapshots=True):
     image_id = image["ImageId"]
     click.echo(f"Deregistering {image_id}")
     client.deregister_image(ImageId=image_id)

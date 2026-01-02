@@ -72,7 +72,7 @@ def assert_snapshot_missing(ec2, snapshot_id):
         return
     assert snapshot_id not in {
         snap["SnapshotId"] for snap in ec2.describe_snapshots(OwnerIds=["self"])["Snapshots"]
-    } # pragma: no cover  (defensive)
+    }  # pragma: no cover  (defensive)
 
 
 def assert_snapshot_exists(ec2, snapshot_id):
