@@ -42,6 +42,30 @@ def collect_snapshot_ids(image):
     return snapshot_ids
 
 
+def get_expired_images(images, today):
+    """
+    Filter images to those with delete-after tags before the given date.
+    
+    Parameters
+    ----------
+    images : list
+        List of image dictionaries from AWS EC2 describe_images response.
+    today : date
+        date object representing the current date for comparison.
+    
+    Returns
+    -------
+    list of tuple
+        List of tuples (delete_after_date, image) for images that have expired.
+    """
+    expired = []
+    for image in images:
+        delete_after = parse_delete_after(tags_to_dict(image))
+        if delete_after and delete_after < today:
+            expired.append((delete_after, image))
+    return expired
+
+
 def format_image_line(image):
     tags = tags_to_dict(image)
     delete_after = tags.get("delete-after", "-")
@@ -92,11 +116,7 @@ def list_expired():
     images = fetch_managed_images(client)
     today = date.today()
 
-    expired = []
-    for image in images:
-        delete_after = parse_delete_after(tags_to_dict(image))
-        if delete_after and delete_after < today:
-            expired.append((delete_after, image))
+    expired = get_expired_images(images, today)
 
     if not expired:
         click.echo("No AMIs have expired delete-after dates.")
@@ -144,11 +164,7 @@ def auto_delete(force):
     images = fetch_managed_images(client)
     today = date.today()
 
-    targets = []
-    for image in images:
-        delete_after = parse_delete_after(tags_to_dict(image))
-        if delete_after and delete_after < today:
-            targets.append((delete_after, image))
+    targets = get_expired_images(images, today)
 
     if not targets:
         click.echo("No AMIs have expired delete-after dates.")
