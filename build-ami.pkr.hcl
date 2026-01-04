@@ -142,7 +142,7 @@ source "amazon-ebs" "this" {
   ami_name        = local.ami_name
   ami_description = "[OMSF] Ubuntu + NVIDIA + environments: ${local.environments_label}"
 
-  ami_groups = ["all"]
+  ami_groups = []
 
   launch_block_device_mappings {
     device_name           = "/dev/sda1"
