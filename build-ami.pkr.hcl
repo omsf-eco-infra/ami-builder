@@ -116,6 +116,7 @@ locals {
     built_with   = "packer"
     managed_by   = "omsf-ami-builder"
     environments = local.environments_label
+    status       = "ephemeral"
   }
 
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
