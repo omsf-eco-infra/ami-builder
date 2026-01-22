@@ -281,6 +281,39 @@ def test_delete_images_handles_empty_response(monkeypatch):
     assert "No matching AMIs found." in result.output
 
 
+def test_delete_images_exits_when_deregister_fails(monkeypatch):
+    class DummyClient:
+        def __init__(self):
+            self.delete_snapshot_called = False
+
+        def describe_images(self, ImageIds):
+            return {
+                "Images": [
+                    {
+                        "ImageId": "ami-12345678",
+                        "BlockDeviceMappings": [{"Ebs": {"SnapshotId": "snap-12345678"}}],
+                    }
+                ]
+            }
+
+        def deregister_image(self, ImageId):
+            raise botocore.exceptions.ClientError(
+                {"Error": {"Code": "UnauthorizedOperation", "Message": "no permission"}},
+                "DeregisterImage",
+            )
+
+        def delete_snapshot(self, SnapshotId):
+            self.delete_snapshot_called = True
+
+    client = DummyClient()
+    monkeypatch.setattr(ami_cli.boto3, "client", lambda service: client)
+
+    result = CliRunner().invoke(ami_cli.cli, ["delete", "ami-12345678"])
+    assert result.exit_code != 0
+    assert "Failed to deregister ami-12345678" in result.output
+    assert not client.delete_snapshot_called
+
+
 @mock_aws
 def test_auto_delete_removes_expired_amis_and_snapshots(monkeypatch):
     monkeypatch.setattr(ami_cli, "date", fixed_date())

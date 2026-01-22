@@ -76,7 +76,12 @@ def format_image_line(image):
 def delete_image(client, image, delete_snapshots=True):
     image_id = image["ImageId"]
     click.echo(f"Deregistering {image_id}")
-    client.deregister_image(ImageId=image_id)
+    try:
+        client.deregister_image(ImageId=image_id)
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to deregister {image_id}: {exc}"
+        ) from exc
 
     if not delete_snapshots:
         return
