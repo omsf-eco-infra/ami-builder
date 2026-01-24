@@ -494,6 +494,32 @@ def test_ensure_image_passes_for_existing():
 
 
 @mock_aws
+def test_apply_modify_state_updates_tags_and_visibility():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "apply")
+
+    ami_cli._apply_modify_state(
+        ec2=ec2,
+        ami_id=image_id,
+        public=True,
+        days=10,
+        delete_after=None,
+        status="public",
+        dry_run=False,
+    )
+
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "public"
+    assert tags["delete-after"]
+
+    attributes = ec2.describe_image_attribute(
+        ImageId=image_id, Attribute="launchPermission"
+    )
+    groups = {perm.get("Group") for perm in attributes.get("LaunchPermissions", [])}
+    assert "all" in groups
+
+
+@mock_aws
 def test_modify_state_requires_visibility_flag():
     ec2 = boto3.client("ec2", region_name="us-east-1")
     image_id, _ = create_managed_ami(ec2, "modify")
@@ -654,3 +680,31 @@ def test_modify_state_blessed_accepts_long_lifetime(monkeypatch):
     assert result.exit_code == 0
     tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
     assert tags["status"] == "blessed"
+
+
+@mock_aws
+def test_bless_command_sets_five_year_retention(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "bless")
+
+    result = CliRunner().invoke(ami_cli.cli, ["bless", image_id])
+    assert result.exit_code == 0
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "blessed"
+    expected = (date(2024, 1, 1) + dt.timedelta(days=365 * 5)).isoformat()
+    assert tags["delete-after"] == expected
+
+
+@mock_aws
+def test_publish_command_sets_retention(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "publish")
+
+    result = CliRunner().invoke(ami_cli.cli, ["publish", image_id])
+    assert result.exit_code == 0
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "public"
+    expected = (date(2024, 1, 1) + dt.timedelta(days=366)).isoformat()
+    assert tags["delete-after"] == expected

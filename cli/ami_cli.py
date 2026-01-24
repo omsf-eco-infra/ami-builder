@@ -182,6 +182,55 @@ def _ensure_image(ec2, ami_id: str, dry_run: bool) -> None:
         raise click.ClickException(f"AMI not found: {ami_id}")
 
 
+def _apply_modify_state(
+    *,
+    ec2,
+    ami_id: str,
+    public: bool,
+    days: Optional[int],
+    delete_after: Optional[str],
+    status: str,
+    dry_run: bool,
+) -> None:
+    if public is None:
+        raise click.ClickException("Choose either --public or --private.")
+
+    _ensure_image(ec2, ami_id, dry_run)
+    delete_after_date, delete_after_value = _resolve_delete_after(
+        days=days,
+        delete_after=delete_after,
+    )
+
+    if status in ("public", "blessed") and not public:
+        raise click.ClickException(f"status '{status}' requires --public.")
+
+    if status == "blessed":
+        today = _utc_today()
+        try:
+            min_date = today.replace(year=today.year + 2)
+        except ValueError:
+            min_date = today.replace(year=today.year + 2, day=28)
+        if delete_after_date is None or delete_after_date < min_date:
+            raise click.ClickException(
+                "status 'blessed' requires a delete-after at least 2 years from today."
+            )
+
+    _set_visibility(ec2, ami_id, public=public, dry_run=dry_run)
+    _set_tags(
+        ec2,
+        ami_id,
+        {
+            "status": status,
+            "delete-after": delete_after_value,
+        },
+        dry_run,
+    )
+    visibility = "public" if public else "private"
+    click.echo(
+        f"Updated {ami_id}: visibility={visibility} status={status} delete-after={delete_after_value}"
+    )
+
+
 @click.group()
 def cli():
     """Manage AMIs created by omsf-ami-builder."""
@@ -303,45 +352,57 @@ def auto_delete(force):
 )
 def modify_state(ami_id, region, profile, dry_run, public, days, delete_after, status):
     """Update AMI visibility and lifecycle tags."""
-    if public is None:
-        raise click.ClickException("Choose either --public or --private.")
-
     session = boto3.Session(profile_name=profile, region_name=region)
     ec2 = session.client("ec2")
 
-    _ensure_image(ec2, ami_id, dry_run)
-    delete_after_date, delete_after_value = _resolve_delete_after(
+    _apply_modify_state(
+        ec2=ec2,
+        ami_id=ami_id,
+        public=public,
         days=days,
         delete_after=delete_after,
+        status=status,
+        dry_run=dry_run,
     )
 
-    if status in ("public", "blessed") and not public:
-        raise click.ClickException(f"status '{status}' requires --public.")
 
-    if status == "blessed":
-        today = _utc_today()
-        try:
-            min_date = today.replace(year=today.year + 2)
-        except ValueError:
-            min_date = today.replace(year=today.year + 2, day=28)
-        if delete_after_date is None or delete_after_date < min_date:
-            raise click.ClickException(
-                "status 'blessed' requires a delete-after at least 2 years from today."
-            )
-
-    _set_visibility(ec2, ami_id, public=public, dry_run=dry_run)
-    _set_tags(
-        ec2,
-        ami_id,
-        {
-            "status": status,
-            "delete-after": delete_after_value,
-        },
-        dry_run,
+@cli.command("bless")
+@click.argument("ami_id")
+@click.option("--region", default=None, help="AWS region (defaults to AWS config).")
+@click.option("--profile", default=None, help="AWS profile (defaults to AWS config).")
+@click.option("--dry-run", is_flag=True, help="Validate changes without applying them.")
+def bless(ami_id, region, profile, dry_run):
+    """Mark an AMI as blessed and public with a 5-year retention."""
+    session = boto3.Session(profile_name=profile, region_name=region)
+    ec2 = session.client("ec2")
+    _apply_modify_state(
+        ec2=ec2,
+        ami_id=ami_id,
+        public=True,
+        days=365 * 5,
+        delete_after=None,
+        status="blessed",
+        dry_run=dry_run,
     )
-    visibility = "public" if public else "private"
-    click.echo(
-        f"Updated {ami_id}: visibility={visibility} status={status} delete-after={delete_after_value}"
+
+
+@cli.command("publish")
+@click.argument("ami_id")
+@click.option("--region", default=None, help="AWS region (defaults to AWS config).")
+@click.option("--profile", default=None, help="AWS profile (defaults to AWS config).")
+@click.option("--dry-run", is_flag=True, help="Validate changes without applying them.")
+def publish(ami_id, region, profile, dry_run):
+    """Mark an AMI as public with a 366-day retention."""
+    session = boto3.Session(profile_name=profile, region_name=region)
+    ec2 = session.client("ec2")
+    _apply_modify_state(
+        ec2=ec2,
+        ami_id=ami_id,
+        public=True,
+        days=366,
+        delete_after=None,
+        status="public",
+        dry_run=dry_run,
     )
 
 
