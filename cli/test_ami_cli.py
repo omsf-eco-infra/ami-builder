@@ -1,7 +1,9 @@
 from datetime import date
+import datetime as dt
 
 import boto3
 import botocore
+import click
 import pytest
 from click.testing import CliRunner
 from moto import mock_aws
@@ -361,3 +363,294 @@ def test_auto_delete_prompts_without_force(monkeypatch):
     remaining_ids = {img["ImageId"] for img in ec2.describe_images(Owners=["self"])["Images"]}
     assert stay_id in remaining_ids
     assert expired_id not in remaining_ids
+
+
+def test_utc_today_uses_utc_date(monkeypatch):
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2024, 2, 3, 4, 5, 6, tzinfo=dt.timezone.utc)
+
+    monkeypatch.setattr(ami_cli.dt, "datetime", FixedDateTime)
+    assert ami_cli._utc_today() == date(2024, 2, 3)
+
+
+def test_parse_date_valid_and_invalid():
+    assert ami_cli._parse_date("2024-03-10") == date(2024, 3, 10)
+    with pytest.raises(click.ClickException):
+        ami_cli._parse_date("not-a-date")
+
+
+def test_resolve_delete_after_accepts_explicit_date_only():
+    resolved_date, resolved_value = ami_cli._resolve_delete_after(
+        days=None,
+        delete_after="2024-05-01",
+    )
+    assert resolved_date == date(2024, 5, 1)
+    assert resolved_value == "2024-05-01"
+
+
+def test_resolve_delete_after_uses_days(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
+    resolved_date, resolved_value = ami_cli._resolve_delete_after(
+        days=30,
+        delete_after=None,
+    )
+    assert resolved_date == date(2024, 1, 31)
+    assert resolved_value == "2024-01-31"
+
+
+def test_resolve_delete_after_requires_value():
+    with pytest.raises(click.ClickException):
+        ami_cli._resolve_delete_after(days=None, delete_after=None)
+
+
+def test_resolve_delete_after_rejects_negative_days():
+    with pytest.raises(click.ClickException):
+        ami_cli._resolve_delete_after(days=-1, delete_after=None)
+
+
+def test_resolve_delete_after_rejects_both_days_and_date():
+    with pytest.raises(click.ClickException):
+        ami_cli._resolve_delete_after(days=10, delete_after="2024-05-01")
+
+
+def test_handle_dry_run_accepts_dry_run_error():
+    exc = botocore.exceptions.ClientError(
+        {"Error": {"Code": "DryRunOperation", "Message": "dry run"}},
+        "CreateTags",
+    )
+    ami_cli._handle_dry_run(exc, dry_run=True)
+    with pytest.raises(botocore.exceptions.ClientError):
+        ami_cli._handle_dry_run(exc, dry_run=False)
+
+
+def test_handle_dry_run_rejects_other_errors():
+    exc = botocore.exceptions.ClientError(
+        {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
+        "CreateTags",
+    )
+    with pytest.raises(botocore.exceptions.ClientError):
+        ami_cli._handle_dry_run(exc, dry_run=True)
+
+
+@mock_aws
+def test_set_tags_applies_tags():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "tag-test")
+    ami_cli._set_tags(ec2, image_id, {"status": "public"}, dry_run=False)
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "public"
+
+
+@mock_aws
+def test_set_tags_dry_run_does_not_error():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "tag-test")
+    ami_cli._set_tags(ec2, image_id, {"status": "public"}, dry_run=True)
+
+
+@mock_aws
+def test_set_visibility_updates_launch_permissions():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "visibility-test")
+
+    ami_cli._set_visibility(ec2, image_id, public=True, dry_run=False)
+    attributes = ec2.describe_image_attribute(
+        ImageId=image_id, Attribute="launchPermission"
+    )
+    groups = {perm.get("Group") for perm in attributes.get("LaunchPermissions", [])}
+    assert "all" in groups
+
+    ami_cli._set_visibility(ec2, image_id, public=False, dry_run=False)
+    attributes = ec2.describe_image_attribute(
+        ImageId=image_id, Attribute="launchPermission"
+    )
+    groups = {perm.get("Group") for perm in attributes.get("LaunchPermissions", [])}
+    assert "all" not in groups
+
+
+@mock_aws
+def test_set_visibility_dry_run_does_not_error():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "visibility-test")
+    ami_cli._set_visibility(ec2, image_id, public=True, dry_run=True)
+
+
+def test_ensure_image_raises_on_missing():
+    class DummyClient:
+        def describe_images(self, ImageIds, DryRun=False):
+            return {"Images": []}
+
+    with pytest.raises(click.ClickException):
+        ami_cli._ensure_image(DummyClient(), "ami-missing", dry_run=False)
+
+
+@mock_aws
+def test_ensure_image_passes_for_existing():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "exists")
+    ami_cli._ensure_image(ec2, image_id, dry_run=False)
+
+
+@mock_aws
+def test_modify_state_requires_visibility_flag():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        ["modify-state", image_id, "--days", "30"],
+    )
+    assert result.exit_code != 0
+    assert "Choose either --public or --private." in result.output
+
+
+@mock_aws
+def test_modify_state_requires_delete_after_or_days():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        ["modify-state", image_id, "--public"],
+    )
+    assert result.exit_code != 0
+    assert "Provide --days or --delete-after." in result.output
+
+
+@mock_aws
+def test_modify_state_public_updates_visibility_and_tags():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        ["modify-state", image_id, "--public", "--days", "365", "--status", "public"],
+    )
+    assert result.exit_code == 0
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "public"
+    assert tags["delete-after"]
+
+    attributes = ec2.describe_image_attribute(
+        ImageId=image_id, Attribute="launchPermission"
+    )
+    groups = {perm.get("Group") for perm in attributes.get("LaunchPermissions", [])}
+    assert "all" in groups
+
+
+@mock_aws
+def test_modify_state_private_updates_visibility_and_tags():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        [
+            "modify-state",
+            image_id,
+            "--private",
+            "--delete-after",
+            "2025-01-01",
+            "--status",
+            "ephemeral",
+        ],
+    )
+    assert result.exit_code == 0
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "ephemeral"
+    assert tags["delete-after"] == "2025-01-01"
+
+    attributes = ec2.describe_image_attribute(
+        ImageId=image_id, Attribute="launchPermission"
+    )
+    groups = {perm.get("Group") for perm in attributes.get("LaunchPermissions", [])}
+    assert "all" not in groups
+
+
+@mock_aws
+def test_modify_state_public_status_requires_public_flag():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        [
+            "modify-state",
+            image_id,
+            "--private",
+            "--days",
+            "365",
+            "--status",
+            "public",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "status 'public' requires --public." in result.output
+
+
+@mock_aws
+def test_modify_state_blessed_requires_public_flag():
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        [
+            "modify-state",
+            image_id,
+            "--private",
+            "--days",
+            "3650",
+            "--status",
+            "blessed",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "status 'blessed' requires --public." in result.output
+
+
+@mock_aws
+def test_modify_state_blessed_requires_minimum_lifetime(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        [
+            "modify-state",
+            image_id,
+            "--public",
+            "--delete-after",
+            "2025-12-31",
+            "--status",
+            "blessed",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "status 'blessed' requires a delete-after at least 2 years from today." in result.output
+
+
+@mock_aws
+def test_modify_state_blessed_accepts_long_lifetime(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+    image_id, _ = create_managed_ami(ec2, "modify")
+
+    result = CliRunner().invoke(
+        ami_cli.cli,
+        [
+            "modify-state",
+            image_id,
+            "--public",
+            "--delete-after",
+            "2026-01-01",
+            "--status",
+            "blessed",
+        ],
+    )
+    assert result.exit_code == 0
+    tags = ami_cli.tags_to_dict(ec2.describe_images(ImageIds=[image_id])["Images"][0])
+    assert tags["status"] == "blessed"

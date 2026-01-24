@@ -1,5 +1,7 @@
 import sys
+import datetime as dt
 from datetime import date
+from typing import Optional
 
 import boto3
 import botocore
@@ -95,6 +97,91 @@ def delete_image(client, image, delete_snapshots=True):
             click.echo(f"Failed to delete snapshot {snapshot_id}: {exc}", err=True)
 
 
+def _utc_today() -> dt.date:  # pragma: no cover
+    # separate function for easier mocking
+    return dt.datetime.now(dt.timezone.utc).date()
+
+
+def _parse_date(value: str) -> dt.date:
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Invalid date '{value}'. Use YYYY-MM-DD."
+        ) from exc
+
+
+def _resolve_delete_after(
+    *,
+    days: Optional[int],
+    delete_after: Optional[str],
+) -> tuple[Optional[dt.date], str]:
+    if days is not None and delete_after:
+        raise click.ClickException("Use only one of --days or --delete-after.")
+
+    if delete_after:
+        date_value = _parse_date(delete_after)
+        return date_value, date_value.isoformat()
+
+    if days is not None:
+        if days < 0:
+            raise click.ClickException("--days must be non-negative.")
+        date_value = _utc_today() + dt.timedelta(days=days)
+        return date_value, date_value.isoformat()
+
+    raise click.ClickException("Provide --days or --delete-after.")
+
+
+def _handle_dry_run(exc: botocore.exceptions.ClientError, dry_run: bool) -> None:
+    if not dry_run:
+        raise exc
+    code = exc.response.get("Error", {}).get("Code")
+    if code != "DryRunOperation":
+        raise exc
+
+
+def _set_tags(ec2, ami_id: str, tags: dict, dry_run: bool) -> None:
+    payload = [{"Key": key, "Value": value} for key, value in tags.items()]
+    try:
+        ec2.create_tags(
+            Resources=[ami_id],
+            Tags=payload,
+            DryRun=dry_run,
+        )
+    except botocore.exceptions.ClientError as exc:
+        _handle_dry_run(exc, dry_run)
+
+
+def _set_visibility(ec2, ami_id: str, public: bool, dry_run: bool) -> None:
+    try:
+        if public:
+            ec2.modify_image_attribute(
+                ImageId=ami_id,
+                LaunchPermission={"Add": [{"Group": "all"}]},
+                DryRun=dry_run,
+            )
+            return
+
+        ec2.modify_image_attribute(
+            ImageId=ami_id,
+            LaunchPermission={"Remove": [{"Group": "all"}]},
+            DryRun=dry_run,
+        )
+    except botocore.exceptions.ClientError as exc:
+        _handle_dry_run(exc, dry_run)
+
+
+def _ensure_image(ec2, ami_id: str, dry_run: bool) -> None:
+    try:
+        response = ec2.describe_images(ImageIds=[ami_id], DryRun=dry_run)
+    except botocore.exceptions.ClientError as exc:
+        _handle_dry_run(exc, dry_run)
+        return
+    images = response.get("Images", [])
+    if not images:
+        raise click.ClickException(f"AMI not found: {ami_id}")
+
+
 @click.group()
 def cli():
     """Manage AMIs created by omsf-ami-builder."""
@@ -184,6 +271,78 @@ def auto_delete(force):
 
     for _, image in targets:
         delete_image(client, image, delete_snapshots=True)
+
+
+@cli.command("modify-state")
+@click.argument("ami_id")
+@click.option("--region", default=None, help="AWS region (defaults to AWS config).")
+@click.option("--profile", default=None, help="AWS profile (defaults to AWS config).")
+@click.option("--dry-run", is_flag=True, help="Validate changes without applying them.")
+@click.option(
+    "--public/--private",
+    default=None,
+    help="Set AMI visibility.",
+)
+@click.option(
+    "--days",
+    type=int,
+    default=None,
+    help="Retention in days (required unless --delete-after is set).",
+)
+@click.option(
+    "--delete-after",
+    default=None,
+    help="Delete-after tag (YYYY-MM-DD).",
+)
+@click.option(
+    "--status",
+    type=click.Choice(("ephemeral", "public", "blessed", "other")),
+    default="ephemeral",
+    show_default=True,
+    help="Status tag to set on the AMI.",
+)
+def modify_state(ami_id, region, profile, dry_run, public, days, delete_after, status):
+    """Update AMI visibility and lifecycle tags."""
+    if public is None:
+        raise click.ClickException("Choose either --public or --private.")
+
+    session = boto3.Session(profile_name=profile, region_name=region)
+    ec2 = session.client("ec2")
+
+    _ensure_image(ec2, ami_id, dry_run)
+    delete_after_date, delete_after_value = _resolve_delete_after(
+        days=days,
+        delete_after=delete_after,
+    )
+
+    if status in ("public", "blessed") and not public:
+        raise click.ClickException(f"status '{status}' requires --public.")
+
+    if status == "blessed":
+        today = _utc_today()
+        try:
+            min_date = today.replace(year=today.year + 2)
+        except ValueError:
+            min_date = today.replace(year=today.year + 2, day=28)
+        if delete_after_date is None or delete_after_date < min_date:
+            raise click.ClickException(
+                "status 'blessed' requires a delete-after at least 2 years from today."
+            )
+
+    _set_visibility(ec2, ami_id, public=public, dry_run=dry_run)
+    _set_tags(
+        ec2,
+        ami_id,
+        {
+            "status": status,
+            "delete-after": delete_after_value,
+        },
+        dry_run,
+    )
+    visibility = "public" if public else "private"
+    click.echo(
+        f"Updated {ami_id}: visibility={visibility} status={status} delete-after={delete_after_value}"
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
