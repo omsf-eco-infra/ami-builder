@@ -519,6 +519,92 @@ def test_apply_modify_state_updates_tags_and_visibility():
     assert "all" in groups
 
 
+def test_parse_creation_date_handles_missing_and_invalid():
+    assert ami_cli._parse_creation_date({}) is None
+    assert ami_cli._parse_creation_date({"CreationDate": "bad"}) is None
+
+
+def test_parse_creation_date_parses_iso_prefix():
+    image = {"CreationDate": "2024-02-03T04:05:06.000Z"}
+    assert ami_cli._parse_creation_date(image) == date(2024, 2, 3)
+
+
+def test_is_public_status_matches_expected():
+    assert ami_cli._is_public_status("public")
+    assert ami_cli._is_public_status("blessed")
+    assert not ami_cli._is_public_status("ephemeral")
+    assert not ami_cli._is_public_status(None)
+
+
+def test_should_publish_when_no_public_images():
+    today = date(2024, 5, 1)
+    images = [
+        {"CreationDate": "2024-05-01T00:00:00Z", "Tags": [{"Key": "status", "Value": "ephemeral"}]},
+    ]
+    assert ami_cli._should_publish(images, today)
+
+
+def test_should_publish_false_when_public_exists_same_month():
+    today = date(2024, 5, 10)
+    images = [
+        {"CreationDate": "2024-05-02T00:00:00Z", "Tags": [{"Key": "status", "Value": "public"}]},
+    ]
+    assert not ami_cli._should_publish(images, today)
+
+
+def test_should_publish_false_when_blessed_exists_same_month():
+    today = date(2024, 6, 10)
+    images = [
+        {"CreationDate": "2024-06-02T00:00:00Z", "Tags": [{"Key": "status", "Value": "blessed"}]},
+    ]
+    assert not ami_cli._should_publish(images, today)
+
+
+def test_should_publish_true_when_public_is_previous_month():
+    today = date(2024, 6, 10)
+    images = [
+        {"CreationDate": "2024-05-30T00:00:00Z", "Tags": [{"Key": "status", "Value": "public"}]},
+    ]
+    assert ami_cli._should_publish(images, today)
+
+
+def test_should_bless_requires_june_and_publish():
+    assert ami_cli._should_bless(date(2024, 6, 1), should_publish=True)
+    assert not ami_cli._should_bless(date(2024, 6, 1), should_publish=False)
+    assert not ami_cli._should_bless(date(2024, 5, 1), should_publish=True)
+
+
+def test_recommend_state_outputs_bless(monkeypatch):
+    images = []
+    monkeypatch.setattr(ami_cli, "fetch_managed_images", lambda client: images)
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 6, 1))
+
+    result = CliRunner().invoke(ami_cli.cli, ["recommend-state"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "bless"
+
+
+def test_recommend_state_outputs_publish(monkeypatch):
+    images = []
+    monkeypatch.setattr(ami_cli, "fetch_managed_images", lambda client: images)
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 5, 1))
+
+    result = CliRunner().invoke(ami_cli.cli, ["recommend-state"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "publish"
+
+
+def test_recommend_state_outputs_leave_ephemeral(monkeypatch):
+    images = [
+        {"CreationDate": "2024-05-02T00:00:00Z", "Tags": [{"Key": "status", "Value": "public"}]},
+    ]
+    monkeypatch.setattr(ami_cli, "fetch_managed_images", lambda client: images)
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 5, 10))
+
+    result = CliRunner().invoke(ami_cli.cli, ["recommend-state"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "leave ephemeral"
+
 @mock_aws
 def test_modify_state_requires_visibility_flag():
     ec2 = boto3.client("ec2", region_name="us-east-1")

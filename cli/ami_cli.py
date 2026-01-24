@@ -182,6 +182,38 @@ def _ensure_image(ec2, ami_id: str, dry_run: bool) -> None:
         raise click.ClickException(f"AMI not found: {ami_id}")
 
 
+def _parse_creation_date(image) -> Optional[dt.date]:
+    value = image.get("CreationDate")
+    if not value:
+        return None
+    if len(value) >= 10:
+        try:
+            return dt.date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _is_public_status(status: Optional[str]) -> bool:
+    return status in ("public", "blessed")
+
+
+def _should_publish(images, today: dt.date) -> bool:
+    for image in images:
+        tags = tags_to_dict(image)
+        status = tags.get("status")
+        if not _is_public_status(status):
+            continue
+        created = _parse_creation_date(image)
+        if created and created.year == today.year and created.month == today.month:
+            return False
+    return True
+
+
+def _should_bless(today: dt.date, should_publish: bool) -> bool:
+    return should_publish and today.month == 6
+
+
 def _apply_modify_state(
     *,
     ec2,
@@ -404,6 +436,24 @@ def publish(ami_id, region, profile, dry_run):
         status="public",
         dry_run=dry_run,
     )
+
+
+@cli.command("recommend-state")
+@click.option("--region", default=None, help="AWS region (defaults to AWS config).")
+@click.option("--profile", default=None, help="AWS profile (defaults to AWS config).")
+def recommend_state(region, profile):
+    """Recommend whether a new AMI should be published, blessed, or left ephemeral."""
+    session = boto3.Session(profile_name=profile, region_name=region)
+    client = session.client("ec2")
+    images = fetch_managed_images(client)
+    today = _utc_today()
+    should_publish = _should_publish(images, today)
+    if _should_bless(today, should_publish):
+        click.echo("bless")
+    elif should_publish:
+        click.echo("publish")
+    else:
+        click.echo("leave ephemeral")
 
 
 if __name__ == "__main__":  # pragma: no cover
