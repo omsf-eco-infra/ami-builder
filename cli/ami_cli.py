@@ -131,12 +131,11 @@ def _resolve_delete_after(
     raise click.ClickException("Provide --days or --delete-after.")
 
 
-def _handle_dry_run(exc: botocore.exceptions.ClientError, dry_run: bool) -> None:
+def _should_raise_exception(exc: botocore.exceptions.ClientError, dry_run: bool) -> bool:
     if not dry_run:
-        raise exc
+        return True
     code = exc.response.get("Error", {}).get("Code")
-    if code != "DryRunOperation":
-        raise exc
+    return code != "DryRunOperation"
 
 
 def _set_tags(ec2, ami_id: str, tags: dict, dry_run: bool) -> None:
@@ -148,7 +147,8 @@ def _set_tags(ec2, ami_id: str, tags: dict, dry_run: bool) -> None:
             DryRun=dry_run,
         )
     except botocore.exceptions.ClientError as exc:
-        _handle_dry_run(exc, dry_run)
+        if _should_raise_exception(exc, dry_run):
+            raise
 
 
 def _set_visibility(ec2, ami_id: str, public: bool, dry_run: bool) -> None:
@@ -167,14 +167,16 @@ def _set_visibility(ec2, ami_id: str, public: bool, dry_run: bool) -> None:
             DryRun=dry_run,
         )
     except botocore.exceptions.ClientError as exc:
-        _handle_dry_run(exc, dry_run)
+        if _should_raise_exception(exc, dry_run):
+            raise
 
 
 def _ensure_image(ec2, ami_id: str, dry_run: bool) -> None:
     try:
         response = ec2.describe_images(ImageIds=[ami_id], DryRun=dry_run)
     except botocore.exceptions.ClientError as exc:
-        _handle_dry_run(exc, dry_run)
+        if _should_raise_exception(exc, dry_run):
+            raise
         return
     images = response.get("Images", [])
     if not images:

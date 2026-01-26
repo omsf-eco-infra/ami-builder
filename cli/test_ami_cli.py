@@ -414,23 +414,21 @@ def test_resolve_delete_after_rejects_both_days_and_date():
         ami_cli._resolve_delete_after(days=10, delete_after="2024-05-01")
 
 
-def test_handle_dry_run_accepts_dry_run_error():
+def test_should_raise_exception_allows_dry_run_error():
     exc = botocore.exceptions.ClientError(
         {"Error": {"Code": "DryRunOperation", "Message": "dry run"}},
         "CreateTags",
     )
-    ami_cli._handle_dry_run(exc, dry_run=True)
-    with pytest.raises(botocore.exceptions.ClientError):
-        ami_cli._handle_dry_run(exc, dry_run=False)
+    assert not ami_cli._should_raise_exception(exc, dry_run=True)
+    assert ami_cli._should_raise_exception(exc, dry_run=False)
 
 
-def test_handle_dry_run_rejects_other_errors():
+def test_should_raise_exception_rejects_other_errors():
     exc = botocore.exceptions.ClientError(
         {"Error": {"Code": "UnauthorizedOperation", "Message": "nope"}},
         "CreateTags",
     )
-    with pytest.raises(botocore.exceptions.ClientError):
-        ami_cli._handle_dry_run(exc, dry_run=True)
+    assert ami_cli._should_raise_exception(exc, dry_run=True)
 
 
 @mock_aws
