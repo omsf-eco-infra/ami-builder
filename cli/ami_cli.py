@@ -287,7 +287,7 @@ def list_expired():
     """List managed AMIs whose delete-after tag is before today."""
     client = boto3.client("ec2")
     images = fetch_managed_images(client)
-    today = date.today()
+    today = _utc_today()
 
     expired = get_expired_images(images, today)
 
@@ -335,7 +335,7 @@ def auto_delete(force):
 
     client = boto3.client("ec2")
     images = fetch_managed_images(client)
-    today = date.today()
+    today = _utc_today()
 
     targets = get_expired_images(images, today)
 

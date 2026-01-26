@@ -212,7 +212,7 @@ def test_list_managed_images_handles_empty():
 
 @mock_aws
 def test_list_expired_filters_by_past_delete_after(monkeypatch):
-    monkeypatch.setattr(ami_cli, "date", fixed_date())
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
     ec2 = boto3.client("ec2", region_name="us-east-1")
 
     past_ami, _ = create_managed_ami(ec2, "past", delete_after="2023-12-31")
@@ -228,7 +228,7 @@ def test_list_expired_filters_by_past_delete_after(monkeypatch):
 
 @mock_aws
 def test_list_expired_handles_no_expired(monkeypatch):
-    monkeypatch.setattr(ami_cli, "date", fixed_date())
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
     ec2 = boto3.client("ec2", region_name="us-east-1")
 
     create_managed_ami(ec2, "future", delete_after="2024-02-01")
@@ -318,7 +318,7 @@ def test_delete_images_exits_when_deregister_fails(monkeypatch):
 
 @mock_aws
 def test_auto_delete_removes_expired_amis_and_snapshots(monkeypatch):
-    monkeypatch.setattr(ami_cli, "date", fixed_date())
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
     ec2 = boto3.client("ec2", region_name="us-east-1")
 
     expired_one, snap_one = create_managed_ami(ec2, "expired-one", delete_after="2023-12-01")
@@ -338,7 +338,7 @@ def test_auto_delete_removes_expired_amis_and_snapshots(monkeypatch):
 
 @mock_aws
 def test_auto_delete_handles_no_targets(monkeypatch):
-    monkeypatch.setattr(ami_cli, "date", fixed_date())
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
     ec2 = boto3.client("ec2", region_name="us-east-1")
 
     create_managed_ami(ec2, "future", delete_after="2024-02-01")
@@ -350,7 +350,7 @@ def test_auto_delete_handles_no_targets(monkeypatch):
 
 @mock_aws
 def test_auto_delete_prompts_without_force(monkeypatch):
-    monkeypatch.setattr(ami_cli, "date", fixed_date())
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: date(2024, 1, 1))
     ec2 = boto3.client("ec2", region_name="us-east-1")
 
     expired_id, _ = create_managed_ami(ec2, "expired", delete_after="2023-12-01")
