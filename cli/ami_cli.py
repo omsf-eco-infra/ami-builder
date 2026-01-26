@@ -96,7 +96,7 @@ def delete_image(client, image, delete_snapshots=True):
             click.echo(f"Failed to delete snapshot {snapshot_id}: {exc}", err=True)
 
 
-def _utc_today() -> dt.date:  # pragma: no cover
+def _utc_today() -> dt.date:
     # separate function for easier mocking
     return dt.datetime.now(dt.timezone.utc).date()
 
