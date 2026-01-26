@@ -1,6 +1,5 @@
 import sys
 import datetime as dt
-from datetime import date
 from typing import Optional
 
 import boto3
@@ -30,7 +29,7 @@ def parse_delete_after(tags):
         return None
 
     try:
-        return date.fromisoformat(value)
+        return dt.date.fromisoformat(value)
     except ValueError:
         return None
 
