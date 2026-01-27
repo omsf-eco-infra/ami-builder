@@ -116,6 +116,7 @@ locals {
     built_with   = "packer"
     managed_by   = "omsf-ami-builder"
     environments = local.environments_label
+    status       = "ephemeral"
   }
 
   merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
@@ -142,7 +143,7 @@ source "amazon-ebs" "this" {
   ami_name        = local.ami_name
   ami_description = "[OMSF] Ubuntu + NVIDIA + environments: ${local.environments_label}"
 
-  ami_groups = ["all"]
+  ami_groups = []
 
   launch_block_device_mappings {
     device_name           = "/dev/sda1"
