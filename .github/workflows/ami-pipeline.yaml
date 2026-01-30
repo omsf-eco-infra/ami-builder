@@ -74,7 +74,7 @@ jobs:
           short_sha = full_sha[:7]
           suffix = f"{today}-{short_sha}"
           extra_tags = {}
-          delete_after_date = now + datetime.timedelta(days=1)
+          delete_after_date = now + datetime.timedelta(days=7)
 
           if event_name == "pull_request":
               ami_type = "pr"
