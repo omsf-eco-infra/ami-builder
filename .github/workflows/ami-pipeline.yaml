@@ -33,6 +33,7 @@ jobs:
       environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
       aws_region: ${{ steps.config.outputs.aws_region }}
       default_instance_type: ${{ steps.config.outputs.default_instance_type }}
+      recommended_state: ${{ steps.recommend.outputs.state }}
     steps:
       - uses: actions/checkout@v6
 
@@ -184,3 +185,46 @@ jobs:
       test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
       test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
       test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
+
+  publish-ami:
+    name: Publish AMI if recommended
+    needs: [build-ami, test-environment]
+    if: >-
+      ${{ needs.build-ami.outputs.ami_id != '' &&
+          github.event_name != 'pull_request' &&
+          needs.test-environment.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip boto3 click
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-publish
+          aws-region: ${{ needs.build-ami.outputs.aws_region }}
+
+      - name: Publish or bless AMI
+        env:
+          AMI_ID: ${{ needs.build-ami.outputs.ami_id }}
+          RECOMMENDED_STATE: ${{ needs.build-ami.outputs.recommended_state }}
+        run: |
+          set -euo pipefail
+          case "$RECOMMENDED_STATE" in
+            bless|publish)
+              python cli/ami_cli.py "$RECOMMENDED_STATE" "$AMI_ID"
+              ;;
+            *)
+              echo "Recommended state is '$RECOMMENDED_STATE'; no publish/bless action."
+              ;;
+          esac
+        shell: bash
