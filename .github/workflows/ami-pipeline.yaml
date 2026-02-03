@@ -33,6 +33,7 @@ jobs:
       environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
       aws_region: ${{ steps.config.outputs.aws_region }}
       default_instance_type: ${{ steps.config.outputs.default_instance_type }}
+      recommended_state: ${{ steps.recommend.outputs.state }}
     steps:
       - uses: actions/checkout@v6
 
@@ -46,6 +47,14 @@ jobs:
             echo "aws_region=${AWS_REGION}"
             echo "default_instance_type=${DEFAULT_INSTANCE_TYPE}"
           } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip boto3 click
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -73,34 +82,28 @@ jobs:
           short_sha = full_sha[:7]
           suffix = f"{today}-{short_sha}"
           extra_tags = {}
+          delete_after_date = now + datetime.timedelta(days=7)
 
           if event_name == "pull_request":
               ami_type = "pr"
-              days_to_live = 1
               pr_number = event.get("number")
               head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
               short_sha = head_sha[:7]
               suffix = f"pr{pr_number}-{today}-{short_sha}"
               extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
-          elif event_name == "schedule":
-              ami_type = "scheduled"
-              days_to_live = 7
-          elif event_name == "workflow_dispatch":
-              ami_type = "manual"
-              days_to_live = 30
-          elif event_name == "push":
-              ami_type = "push"
-              days_to_live = 30
+          elif event_name in {"schedule", "workflow_dispatch", "push"}:
+              ami_type = {
+                  "schedule": "scheduled",
+                  "workflow_dispatch": "manual",
+                  "push": "push",
+              }[event_name]
           else:
               raise SystemExit(f"Unsupported event type for AMI metadata: {event_name}")
-
-          delete_after_date = now + datetime.timedelta(days=days_to_live)
 
           tags = {
               "omsf-ami-type": ami_type,
               "commit": short_sha,
-              "delete-after": delete_after_date.strftime("%Y%m%d"),
-              "blessed": False,
+              "delete-after": delete_after_date.strftime("%Y-%m-%d"),
           }
           tags.update(extra_tags)
           tags_json = json.dumps(tags)
@@ -109,6 +112,14 @@ jobs:
           with output_path.open("a", encoding="utf-8") as github_output:
               github_output.write(f"ami_name_suffix={suffix}\n")
               github_output.write(f"additional_tags={tags_json}\n")
+
+      - name: Recommend AMI state
+        id: recommend
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=$(python cli/ami_cli.py recommend-state)
+          echo "state=${state}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
@@ -182,3 +193,46 @@ jobs:
       test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
       test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
       test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
+
+  publish-ami:
+    name: Publish AMI if recommended
+    needs: [build-ami, test-environment]
+    if: >-
+      ${{ needs.build-ami.outputs.ami_id != '' &&
+          github.event_name != 'pull_request' &&
+          needs.test-environment.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip boto3 click
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-publish
+          aws-region: ${{ needs.build-ami.outputs.aws_region }}
+
+      - name: Publish or bless AMI
+        env:
+          AMI_ID: ${{ needs.build-ami.outputs.ami_id }}
+          RECOMMENDED_STATE: ${{ needs.build-ami.outputs.recommended_state }}
+        run: |
+          set -euo pipefail
+          case "$RECOMMENDED_STATE" in
+            bless|publish)
+              python cli/ami_cli.py "$RECOMMENDED_STATE" "$AMI_ID"
+              ;;
+            *)
+              echo "Recommended state is '$RECOMMENDED_STATE'; no publish/bless action."
+              ;;
+          esac
+        shell: bash

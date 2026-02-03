@@ -1,0 +1,88 @@
+name: PR Close Cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  MANAGED_BY: omsf-ami-builder
+
+jobs:
+  delete-pr-amis:
+    name: Delete PR AMIs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip boto3 click
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-pr-close
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find PR AMIs
+        id: find
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import sys
+
+          import boto3
+
+          pr_number = os.environ.get("PR_NUMBER")
+          if not pr_number:
+              sys.exit("PR_NUMBER is required to find PR AMIs.")
+
+          client = boto3.client("ec2", region_name=os.environ.get("AWS_REGION"))
+          managed_by = os.environ.get("MANAGED_BY")
+          response = client.describe_images(
+              Owners=["self"],
+              Filters=[
+                  {"Name": "tag:managed_by", "Values": [managed_by]},
+                  {"Name": "tag:pr", "Values": [str(pr_number)]},
+              ],
+          )
+          images = response.get("Images", [])
+          ami_ids = sorted({image["ImageId"] for image in images})
+
+          if ami_ids:
+              print("Found AMIs to delete:")
+              for image in sorted(images, key=lambda i: i.get("Name", "")):
+                  tags = {tag["Key"]: tag["Value"] for tag in image.get("Tags", [])}
+                  delete_after = tags.get("delete-after", "-")
+                  name = image.get("Name", "-")
+                  print(f"{image['ImageId']}\t{name}\tdelete-after={delete_after}")
+          else:
+              print(f"No AMIs found for PR {pr_number}.")
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as fh:
+              fh.write(f"ami_ids={' '.join(ami_ids)}\n")
+              fh.write(f"ami_count={len(ami_ids)}\n")
+          PY
+
+      - name: Delete PR AMIs
+        if: ${{ steps.find.outputs.ami_count != '0' }}
+        run: |
+          set -euo pipefail
+          python cli/ami_cli.py delete ${{ steps.find.outputs.ami_ids }} --delete-snapshots
