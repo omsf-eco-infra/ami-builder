@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-NVIDIA_SMOKE_MODE="${NVIDIA_SMOKE_MODE:-ami}"
+BUILD_ENV="${BUILD_ENV:-ami}"
 
-if [[ "${NVIDIA_SMOKE_MODE}" == "docker" ]]; then
+if [[ "${BUILD_ENV}" == "docker" ]]; then
   echo "[nvidia docker check] Checking nvidia-smi availability"
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     echo "nvidia-smi not found; skipping GPU checks in Docker mode"

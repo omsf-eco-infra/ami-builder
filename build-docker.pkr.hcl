@@ -165,9 +165,7 @@ build {
   provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
     environment_vars = [
-      "TARGET_USER=root",
-      "TARGET_GROUP=root",
-      "USE_SUDO=false",
+      "BUILD_ENV=docker",
       "MAMBA_ROOT_PREFIX=/opt/micromamba",
     ]
   }
@@ -210,11 +208,8 @@ build {
     environment_vars = [
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
-      "TARGET_USER=root",
-      "TARGET_GROUP=root",
-      "USE_SUDO=false",
+      "BUILD_ENV=docker",
       "MAMBA_ROOT_PREFIX=/opt/micromamba",
-      "AUTO_ACTIVATE_DEFAULT=false",
       "MAMBA_EXTRACT_THREADS=1",
       "MAMBA_DOWNLOAD_THREADS=1",
       "MAMBA_NO_BANNER=1",
@@ -233,11 +228,9 @@ build {
       script = "build-scripts/smoke-test.sh"
       environment_vars = [
         "MICROMAMBA_ENV_NAME=${provisioner.value}",
-        "TARGET_USER=root",
-        "USE_SUDO=false",
+        "BUILD_ENV=docker",
         "MAMBA_ROOT_PREFIX=/opt/micromamba",
         "ENVIRONMENT_DIR_ROOT=${local.remote_environment_root}",
-        "MICROMAMBA_USE_PROFILE=false",
         "KMP_AFFINITY=disabled",
         "OMP_NUM_THREADS=1",
         "OMP_PROC_BIND=false",

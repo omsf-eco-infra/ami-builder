@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET_USER="${TARGET_USER:-ubuntu}"
-TARGET_GROUP="${TARGET_GROUP:-$TARGET_USER}"
-USE_SUDO="${USE_SUDO:-true}"
+BUILD_ENV="${BUILD_ENV:-ami}"
+if [[ "${BUILD_ENV}" == "docker" ]]; then
+  TARGET_USER="root"
+  TARGET_GROUP="root"
+  USE_SUDO="false"
+  AUTO_ACTIVATE_DEFAULT="false"
+else
+  TARGET_USER="ubuntu"
+  TARGET_GROUP="ubuntu"
+  USE_SUDO="true"
+  AUTO_ACTIVATE_DEFAULT="true"
+fi
 MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
-AUTO_ACTIVATE_DEFAULT="${AUTO_ACTIVATE_DEFAULT:-true}"
 
 maybe_sudo() {
   if [[ "${USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then

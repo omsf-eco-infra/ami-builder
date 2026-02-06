@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET_USER="${TARGET_USER:-ubuntu}"
-USE_SUDO="${USE_SUDO:-true}"
+BUILD_ENV="${BUILD_ENV:-ami}"
+if [[ "${BUILD_ENV}" == "docker" ]]; then
+  TARGET_USER="root"
+  USE_SUDO="false"
+  MICROMAMBA_USE_PROFILE="false"
+else
+  TARGET_USER="ubuntu"
+  USE_SUDO="true"
+  MICROMAMBA_USE_PROFILE="true"
+fi
 MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
 ENVIRONMENT_DIR_ROOT="${ENVIRONMENT_DIR_ROOT:-/tmp/environments}"
-MICROMAMBA_USE_PROFILE="${MICROMAMBA_USE_PROFILE:-true}"
 
 run_as_target_user() {
   if [[ "${TARGET_USER}" == "root" ]]; then
