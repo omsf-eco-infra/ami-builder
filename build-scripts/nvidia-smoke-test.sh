@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
+NVIDIA_SMOKE_MODE="${NVIDIA_SMOKE_MODE:-ami}"
+
+if [[ "${NVIDIA_SMOKE_MODE}" == "docker" ]]; then
+  echo "[nvidia docker check] Checking nvidia-smi availability"
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "nvidia-smi not found; skipping GPU checks in Docker mode"
+    exit 0
+  fi
+  nvidia-smi -L || {
+    echo "nvidia-smi failed; GPU runtime may be unavailable"; exit 1
+  }
+  exit 0
+fi
+
 echo "[nvidia module check] Checking DKMS + module availability"
 dpkg -l | grep -E "nvidia-(dkms|driver|utils)" || {
   echo "NVIDIA driver packages not installed"; exit 1

@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script assumes it's running as the "ubuntu" user with sudo available.
+TARGET_USER="${TARGET_USER:-ubuntu}"
+TARGET_GROUP="${TARGET_GROUP:-$TARGET_USER}"
+USE_SUDO="${USE_SUDO:-true}"
+MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
 
-echo "[install_micromamba] Installing micromamba into /usr/local/bin and preparing /opt/micromamba"
+maybe_sudo() {
+  if [[ "${USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+echo "[install_micromamba] Installing micromamba into /usr/local/bin and preparing ${MAMBA_ROOT_PREFIX}"
 
 # Download and install micromamba
 tmpdir="$(mktemp -d)"
 pushd "$tmpdir" >/dev/null
 
 curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba
-sudo mv bin/micromamba /usr/local/bin/micromamba
-sudo chmod 755 /usr/local/bin/micromamba
+maybe_sudo mv bin/micromamba /usr/local/bin/micromamba
+maybe_sudo chmod 755 /usr/local/bin/micromamba
 
 popd >/dev/null
 rm -rf "$tmpdir"
 
-# Create a root prefix for micromamba and give it to the ubuntu user
-sudo mkdir -p /opt/micromamba
-sudo chown ubuntu:ubuntu /opt/micromamba
+# Create a root prefix for micromamba and give it to the target user
+maybe_sudo mkdir -p "${MAMBA_ROOT_PREFIX}"
+maybe_sudo chown "${TARGET_USER}:${TARGET_GROUP}" "${MAMBA_ROOT_PREFIX}"
 
 echo "[install_micromamba] Done."
