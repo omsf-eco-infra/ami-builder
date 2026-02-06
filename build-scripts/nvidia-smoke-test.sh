@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-BUILD_ENV="${BUILD_ENV:-ami}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=build-scripts/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
 if [[ "${BUILD_ENV}" == "docker" ]]; then
   echo "[nvidia docker check] Checking nvidia-smi availability"

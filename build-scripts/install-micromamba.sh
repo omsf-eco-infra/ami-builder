@@ -1,25 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUILD_ENV="${BUILD_ENV:-ami}"
-if [[ "${BUILD_ENV}" == "docker" ]]; then
-  TARGET_USER="root"
-  TARGET_GROUP="root"
-  USE_SUDO="false"
-else
-  TARGET_USER="ubuntu"
-  TARGET_GROUP="ubuntu"
-  USE_SUDO="true"
-fi
-MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
-
-maybe_sudo() {
-  if [[ "${USE_SUDO}" == "true" && "$(id -u)" -ne 0 ]]; then
-    sudo "$@"
-  else
-    "$@"
-  fi
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=build-scripts/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
 echo "[install_micromamba] Installing micromamba into /usr/local/bin and preparing ${MAMBA_ROOT_PREFIX}"
 

@@ -1,28 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUILD_ENV="${BUILD_ENV:-ami}"
-if [[ "${BUILD_ENV}" == "docker" ]]; then
-  TARGET_USER="root"
-  USE_SUDO="false"
-  MICROMAMBA_USE_PROFILE="false"
-else
-  TARGET_USER="ubuntu"
-  USE_SUDO="true"
-  MICROMAMBA_USE_PROFILE="true"
-fi
-MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
-ENVIRONMENT_DIR_ROOT="${ENVIRONMENT_DIR_ROOT:-/tmp/environments}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=build-scripts/lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 
-run_as_target_user() {
-  if [[ "${TARGET_USER}" == "root" ]]; then
-    "$@"
-  elif [[ "${USE_SUDO}" == "true" ]]; then
-    sudo -u "${TARGET_USER}" "$@"
-  else
-    "$@"
-  fi
-}
+ENVIRONMENT_DIR_ROOT="${ENVIRONMENT_DIR_ROOT:-/tmp/environments}"
 
 if [[ -z "${MICROMAMBA_ENV_NAME:-}" ]]; then
   echo "[smoke_test] MICROMAMBA_ENV_NAME must be set" >&2
