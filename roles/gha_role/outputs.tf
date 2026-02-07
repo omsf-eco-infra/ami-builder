@@ -10,5 +10,5 @@ output "iam_role_arn" {
 
 output "oidc_subject" {
   description = "Custom GitHub Actions OIDC subject string that is allowed to assume the role."
-  value       = module.workflow_oidc.oidc_subject
+  value       = module.workflow_oidc.oidc_subjects[0]
 }

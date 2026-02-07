@@ -9,7 +9,7 @@ module "workflow_oidc" {
   }
 
   github_repository             = var.github_repository
-  workflow_filename             = var.workflow_filename
+  workflow_filenames            = [var.workflow_filename]
   workflow_ref                  = var.workflow_ref
   github_oidc_provider_arn      = var.github_oidc_provider_arn
   subject_claim_template_configured = var.subject_claim_template_configured

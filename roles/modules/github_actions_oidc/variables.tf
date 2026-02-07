@@ -8,13 +8,15 @@ variable "github_repository" {
   }
 }
 
-variable "workflow_filename" {
-  description = "GitHub Actions workflow filename (under .github/workflows) that should be allowed to assume the IAM role."
-  type        = string
+variable "workflow_filenames" {
+  description = "GitHub Actions workflow filenames (under .github/workflows) that should be allowed to assume the IAM role."
+  type        = list(string)
 
   validation {
-    condition     = length(trimspace(var.workflow_filename)) > 0
-    error_message = "Workflow filename cannot be empty."
+    condition = length(var.workflow_filenames) > 0 && alltrue([
+      for filename in var.workflow_filenames : length(trimspace(filename)) > 0
+    ])
+    error_message = "Workflow filenames must be a non-empty list of non-empty strings."
   }
 }
 
