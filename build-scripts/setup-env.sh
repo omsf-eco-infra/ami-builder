@@ -2,8 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=build-scripts/lib.sh
-source "${SCRIPT_DIR}/lib.sh"
+if [[ -f "${SCRIPT_DIR}/lib.sh" ]]; then
+  # shellcheck source=build-scripts/lib.sh
+  source "${SCRIPT_DIR}/lib.sh"
+elif [[ -f "/tmp/lib.sh" ]]; then
+  # shellcheck source=/tmp/lib.sh
+  source "/tmp/lib.sh"
+else
+  echo "[setup_env] lib.sh not found" >&2
+  exit 1
+fi
 
 if [[ -z "${ENVIRONMENT_DIRS:-}" ]]; then
   echo "[setup_env] ENVIRONMENT_DIRS must be set" >&2

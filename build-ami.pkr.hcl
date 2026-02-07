@@ -197,6 +197,11 @@ build {
   }
 
   ## Micromamba environments
+  provisioner "file" {
+    source      = "build-scripts/lib.sh"
+    destination = "/tmp/lib.sh"
+  }
+
   provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
   }

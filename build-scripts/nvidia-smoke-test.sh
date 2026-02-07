@@ -2,8 +2,16 @@
 set -euxo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=build-scripts/lib.sh
-source "${SCRIPT_DIR}/lib.sh"
+if [[ -f "${SCRIPT_DIR}/lib.sh" ]]; then
+  # shellcheck source=build-scripts/lib.sh
+  source "${SCRIPT_DIR}/lib.sh"
+elif [[ -f "/tmp/lib.sh" ]]; then
+  # shellcheck source=/tmp/lib.sh
+  source "/tmp/lib.sh"
+else
+  echo "[nvidia_smoke_test] lib.sh not found" >&2
+  exit 1
+fi
 
 if [[ "${BUILD_ENV}" == "docker" ]]; then
   echo "[nvidia docker check] Checking nvidia-smi availability"

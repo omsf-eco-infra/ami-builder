@@ -2,8 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-# shellcheck source=build-scripts/lib.sh
-source "${SCRIPT_DIR}/lib.sh"
+if [[ -f "${SCRIPT_DIR}/lib.sh" ]]; then
+  # shellcheck source=build-scripts/lib.sh
+  source "${SCRIPT_DIR}/lib.sh"
+elif [[ -f "/tmp/lib.sh" ]]; then
+  # shellcheck source=/tmp/lib.sh
+  source "/tmp/lib.sh"
+else
+  echo "[install_micromamba] lib.sh not found" >&2
+  exit 1
+fi
 
 echo "[install_micromamba] Installing micromamba into /usr/local/bin and preparing ${MAMBA_ROOT_PREFIX}"
 
