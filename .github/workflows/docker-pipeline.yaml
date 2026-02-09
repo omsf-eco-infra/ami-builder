@@ -1,0 +1,38 @@
+name: Docker Smoke Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-build:
+    name: Smoke test docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          packer_version: latest
+
+      - name: Packer init
+        run: packer init build-docker.pkr.hcl
+
+      - name: Build Docker image (smoke)
+        env:
+          DOCKER_REPO: local/omsf-smoke-test  # TODO: set actual repo
+        run: |
+          set -euo pipefail
+          packer build \
+            -var-file "openfe.pkrvars.hcl" \
+            -var "ami_name_suffix=smoke" \
+            -var "additional_tags={}" \
+            -var "docker_repository=${DOCKER_REPO}" \
+            build-docker.pkr.hcl
