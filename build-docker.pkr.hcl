@@ -55,7 +55,7 @@ variable "additional_tags" {
 locals {
   ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
-  ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
+  ami_base_with_suffix = local.ami_name_suffix == "" ? local.ami_base_name : "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
 
   available_environment_paths = {
@@ -141,7 +141,7 @@ source "docker" "this" {
   changes = concat([
     "ENV MAMBA_ROOT_PREFIX=/opt/micromamba",
     "ENV MICROMAMBA_DEFAULT_ENVIRONMENT=${local.default_environment}",
-    "ENV MICROMAMBA_ENVIRONMENTS=${join(" ", local.enabled_environment_names)}",
+    "ENV MICROMAMBA_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
     "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
     "CMD [\"bash\", \"-l\"]",
   ], local.label_changes)
@@ -226,6 +226,13 @@ build {
     destination = "/usr/local/bin/omsf-entrypoint.sh"
   }
 
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "chmod 755 /usr/local/bin/omsf-entrypoint.sh",
+    ]
+  }
   dynamic "provisioner" {
     for_each = local.enabled_environment_names
     labels   = ["shell"]

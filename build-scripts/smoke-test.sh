@@ -20,7 +20,7 @@ if [[ -z "${MICROMAMBA_ENV_NAME:-}" ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEST_ROOT="${ENVIRONMENT_DIR_ROOT}/${MICROMAMBA_ENV_NAME}"
 DEFAULT_SMOKE_TEST="${TEST_ROOT}/smoke-tests.sh"
