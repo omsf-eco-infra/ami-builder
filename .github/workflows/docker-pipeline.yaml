@@ -76,6 +76,25 @@ jobs:
           echo "Collected packer metadata:"
           jq '.builds[0].custom_data' "$manifest_path"
 
+      - name: Save Docker image
+        run: |
+          set -euo pipefail
+          docker save "${{ steps.collect.outputs.image_repo }}:${{ steps.collect.outputs.image_tag }}" -o docker-image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar
+          retention-days: 2
+
+      - name: Upload packer manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packer-docker-manifest
+          path: packer-docker-manifest.json
+          retention-days: 7
+
   test-environment:
     name: Test environment (${{ matrix.environment.name }})
     needs: build-docker
@@ -86,6 +105,21 @@ jobs:
         environment: ${{ fromJson(needs.build-docker.outputs.environment_matrix) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Download packer manifest artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: packer-docker-manifest
+
+      - name: Load Docker image
+        run: |
+          set -euo pipefail
+          docker load -i docker-image.tar
+
       - name: Run full tests
         run: |
           set -euo pipefail
