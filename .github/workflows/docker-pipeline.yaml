@@ -1,4 +1,4 @@
-name: Docker Smoke Build
+name: Docker Build and Test
 
 on:
   workflow_dispatch:
@@ -11,9 +11,13 @@ permissions:
   contents: read
 
 jobs:
-  smoke-build:
-    name: Smoke test docker build
+  build-docker:
+    name: Build Docker image
     runs-on: ubuntu-latest
+    outputs:
+      image_repo: ${{ steps.collect.outputs.image_repo }}
+      image_tag: ${{ steps.collect.outputs.image_tag }}
+      environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
     steps:
       - uses: actions/checkout@v6
 
@@ -25,9 +29,9 @@ jobs:
       - name: Packer init
         run: packer init build-docker.pkr.hcl
 
-      - name: Build Docker image (smoke)
+      - name: Build Docker image
         env:
-          DOCKER_REPO: local/omsf-smoke-test  # TODO: set actual repo
+          DOCKER_REPO: local/omsf-smoke-test
         run: |
           set -euo pipefail
           packer build \
@@ -36,3 +40,57 @@ jobs:
             -var "additional_tags={}" \
             -var "docker_repository=${DOCKER_REPO}" \
             build-docker.pkr.hcl
+
+      - name: Collect packer manifest outputs
+        id: collect
+        run: |
+          set -euo pipefail
+          manifest_path="packer-docker-manifest.json"
+          if [ ! -f "$manifest_path" ]; then
+            echo "Packer manifest not found at $manifest_path" >&2
+            ls -al
+            exit 1
+          fi
+
+          image_tag=$(jq -r '.builds[0].custom_data.ami_base_with_suffix // ""' "$manifest_path")
+          matrix_json=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
+
+          if [ -z "$image_tag" ]; then
+            echo "Image tag missing from manifest" >&2
+            exit 1
+          fi
+
+          if [ -z "$matrix_json" ] || [ "$matrix_json" = "null" ]; then
+            echo "Environment matrix missing from manifest" >&2
+            exit 1
+          fi
+
+          if ! echo "$matrix_json" | jq -e . >/dev/null; then
+            echo "Environment matrix is not valid JSON" >&2
+            exit 1
+          fi
+
+          echo "image_repo=local/omsf-smoke-test" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "environment_matrix=${matrix_json}" >> "$GITHUB_OUTPUT"
+          echo "Collected packer metadata:"
+          jq '.builds[0].custom_data' "$manifest_path"
+
+  test-environment:
+    name: Test environment (${{ matrix.environment.name }})
+    needs: build-docker
+    if: ${{ needs.build-docker.outputs.image_repo != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.build-docker.outputs.environment_matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run full tests
+        run: |
+          set -euo pipefail
+          env_name="${{ matrix.environment.name }}"
+          docker run --rm \
+            -e "MICROMAMBA_DEFAULT_ENVIRONMENT=${env_name}" \
+            "${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}" \
+            bash -lc "/tmp/environments/${env_name}/full-tests.sh"
