@@ -44,44 +44,11 @@ jobs:
 
       - name: Collect packer manifest outputs
         id: collect
-        run: |
-          set -euo pipefail
-          manifest_path="packer-docker-manifest.json"
-          if [ ! -f "$manifest_path" ]; then
-            echo "Packer manifest not found at $manifest_path" >&2
-            ls -al
-            exit 1
-          fi
-
-          docker_tags_json=$(jq -r '.builds[0].custom_data.docker_tags // ""' "$manifest_path")
-          image_tag=$(echo "$docker_tags_json" | jq -r '.[0] // ""')
-          matrix_json=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
-
-          if [ -z "$image_tag" ]; then
-            echo "Image tag missing from manifest" >&2
-            exit 1
-          fi
-
-          if [ "$(echo "$docker_tags_json" | jq -r 'length')" -ne 1 ]; then
-            echo "Expected exactly one docker tag, got: $docker_tags_json" >&2
-            exit 1
-          fi
-
-          if [ -z "$matrix_json" ] || [ "$matrix_json" = "null" ]; then
-            echo "Environment matrix missing from manifest" >&2
-            exit 1
-          fi
-
-          if ! echo "$matrix_json" | jq -e . >/dev/null; then
-            echo "Environment matrix is not valid JSON" >&2
-            exit 1
-          fi
-
-          echo "image_repo=ghcr.io/omsf-eco-infra/omsf" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "environment_matrix=${matrix_json}" >> "$GITHUB_OUTPUT"
-          echo "Collected packer metadata:"
-          jq '.builds[0].custom_data' "$manifest_path"
+        uses: ./.github/actions/collect-packer-metadata
+        with:
+          manifest_path: packer-docker-manifest.json
+          kind: docker
+          image_repo: ghcr.io/omsf-eco-infra/omsf
 
       - name: Log in to GHCR
         run: |

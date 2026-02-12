@@ -1,0 +1,105 @@
+name: Collect Packer Metadata
+description: Parse a Packer manifest and emit normalized build metadata outputs.
+
+inputs:
+  manifest_path:
+    description: Path to the Packer manifest file.
+    required: true
+  kind:
+    description: Manifest kind to parse (ami or docker).
+    required: true
+  image_repo:
+    description: Docker image repository to emit for docker manifests.
+    required: false
+    default: ""
+
+outputs:
+  environment_matrix:
+    description: JSON environment matrix emitted by the Packer template.
+    value: ${{ steps.collect.outputs.environment_matrix }}
+  ami_id:
+    description: AMI ID (without artifact prefix), for ami manifests.
+    value: ${{ steps.collect.outputs.ami_id }}
+  ami_name:
+    description: AMI logical name from manifest custom data, for ami manifests.
+    value: ${{ steps.collect.outputs.ami_name }}
+  image_repo:
+    description: Docker image repository, for docker manifests.
+    value: ${{ steps.collect.outputs.image_repo }}
+  image_tag:
+    description: Docker image tag, for docker manifests.
+    value: ${{ steps.collect.outputs.image_tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Collect metadata
+      id: collect
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        manifest_path="${{ inputs.manifest_path }}"
+        kind="${{ inputs.kind }}"
+
+        if [ ! -f "$manifest_path" ]; then
+          echo "Packer manifest not found at $manifest_path" >&2
+          ls -al
+          exit 1
+        fi
+
+        if [ "$kind" != "ami" ] && [ "$kind" != "docker" ]; then
+          echo "Unsupported kind '$kind'. Expected 'ami' or 'docker'." >&2
+          exit 1
+        fi
+
+        matrix_json=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
+        if [ -z "$matrix_json" ] || [ "$matrix_json" = "null" ]; then
+          echo "Environment matrix missing from manifest" >&2
+          exit 1
+        fi
+
+        if ! echo "$matrix_json" | jq -e . >/dev/null; then
+          echo "Environment matrix is not valid JSON" >&2
+          exit 1
+        fi
+
+        echo "environment_matrix=${matrix_json}" >> "$GITHUB_OUTPUT"
+
+        if [ "$kind" = "ami" ]; then
+          artifact_id=$(jq -r '.builds[0].artifact_id // empty' "$manifest_path")
+          if [ -z "$artifact_id" ]; then
+            echo "AMI artifact identifier missing from manifest" >&2
+            exit 1
+          fi
+          ami_id="${artifact_id##*:}"
+          ami_name=$(jq -r '.builds[0].custom_data.ami_base_name // ""' "$manifest_path")
+
+          echo "ami_id=${ami_id}" >> "$GITHUB_OUTPUT"
+          echo "ami_name=${ami_name}" >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ "$kind" = "docker" ]; then
+          docker_tags_json=$(jq -r '.builds[0].custom_data.docker_tags // ""' "$manifest_path")
+          image_tag=$(echo "$docker_tags_json" | jq -r '.[0] // ""')
+          if [ -z "$image_tag" ]; then
+            echo "Image tag missing from manifest" >&2
+            exit 1
+          fi
+          if [ "$(echo "$docker_tags_json" | jq -r 'length')" -ne 1 ]; then
+            echo "Expected exactly one docker tag, got: $docker_tags_json" >&2
+            exit 1
+          fi
+
+          image_repo="${{ inputs.image_repo }}"
+          if [ -z "$image_repo" ]; then
+            echo "image_repo input is required for docker kind" >&2
+            exit 1
+          fi
+
+          echo "image_repo=${image_repo}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "Collected packer metadata:"
+        jq '.builds[0].custom_data' "$manifest_path"
