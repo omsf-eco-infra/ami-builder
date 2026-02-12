@@ -53,11 +53,17 @@ jobs:
             exit 1
           fi
 
-          image_tag=$(jq -r '.builds[0].custom_data.ami_base_with_suffix // ""' "$manifest_path")
+          docker_tags_json=$(jq -r '.builds[0].custom_data.docker_tags // ""' "$manifest_path")
+          image_tag=$(echo "$docker_tags_json" | jq -r '.[0] // ""')
           matrix_json=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
 
           if [ -z "$image_tag" ]; then
             echo "Image tag missing from manifest" >&2
+            exit 1
+          fi
+
+          if [ "$(echo "$docker_tags_json" | jq -r 'length')" -ne 1 ]; then
+            echo "Expected exactly one docker tag, got: $docker_tags_json" >&2
             exit 1
           fi
 
@@ -84,7 +90,7 @@ jobs:
       - name: Push Docker image
         run: |
           set -euo pipefail
-          docker push --all-tags "ghcr.io/omsf-eco-infra/omsf"
+          docker push "${{ steps.collect.outputs.image_repo }}:${{ steps.collect.outputs.image_tag }}"
 
   test-environment:
     name: Test environment (${{ matrix.environment.name }})

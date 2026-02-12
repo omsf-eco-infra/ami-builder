@@ -129,8 +129,7 @@ locals {
   merged_labels = merge(local.base_labels, local.build_metadata, jsondecode(var.additional_tags))
 
   primary_tag = "${local.ami_base_with_suffix}-{{timestamp}}"
-  date_tag    = formatdate("YYYYMMDD", timestamp())
-  tag_list    = distinct([local.primary_tag, local.ami_base_with_suffix, local.date_tag, "latest"])
+  tag_list    = [local.primary_tag]
 
   label_changes = [for key, value in local.merged_labels : "LABEL ${key}=${jsonencode(value)}"]
 }
