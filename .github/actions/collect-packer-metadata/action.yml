@@ -35,71 +35,82 @@ runs:
   steps:
     - name: Collect metadata
       id: collect
-      shell: bash
+      shell: python
       run: |
-        set -euo pipefail
+        import json
+        import os
+        import sys
+        from pathlib import Path
 
-        manifest_path="${{ inputs.manifest_path }}"
-        kind="${{ inputs.kind }}"
+        manifest_path = Path("${{ inputs.manifest_path }}")
+        kind = "${{ inputs.kind }}"
+        image_repo_input = "${{ inputs.image_repo }}"
 
-        if [ ! -f "$manifest_path" ]; then
-          echo "Packer manifest not found at $manifest_path" >&2
-          ls -al
-          exit 1
-        fi
+        def fail(message: str) -> None:
+          print(message, file=sys.stderr)
+          raise SystemExit(1)
 
-        if [ "$kind" != "ami" ] && [ "$kind" != "docker" ]; then
-          echo "Unsupported kind '$kind'. Expected 'ami' or 'docker'." >&2
-          exit 1
-        fi
+        if not manifest_path.is_file():
+          fail(f"Packer manifest not found at {manifest_path}")
 
-        matrix_json=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
-        if [ -z "$matrix_json" ] || [ "$matrix_json" = "null" ]; then
-          echo "Environment matrix missing from manifest" >&2
-          exit 1
-        fi
+        if kind not in {"ami", "docker"}:
+          fail(f"Unsupported kind '{kind}'. Expected 'ami' or 'docker'.")
 
-        if ! echo "$matrix_json" | jq -e . >/dev/null; then
-          echo "Environment matrix is not valid JSON" >&2
-          exit 1
-        fi
+        try:
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+          fail(f"Manifest is not valid JSON: {exc}")
 
-        echo "environment_matrix=${matrix_json}" >> "$GITHUB_OUTPUT"
+        builds = manifest.get("builds")
+        if not isinstance(builds, list) or not builds:
+          fail("Manifest does not contain builds[0].")
 
-        if [ "$kind" = "ami" ]; then
-          artifact_id=$(jq -r '.builds[0].artifact_id // empty' "$manifest_path")
-          if [ -z "$artifact_id" ]; then
-            echo "AMI artifact identifier missing from manifest" >&2
-            exit 1
-          fi
-          ami_id="${artifact_id##*:}"
-          ami_name=$(jq -r '.builds[0].custom_data.ami_base_name // ""' "$manifest_path")
+        build = builds[0]
+        custom_data = build.get("custom_data")
+        if not isinstance(custom_data, dict):
+          fail("Manifest custom_data is missing or invalid.")
 
-          echo "ami_id=${ami_id}" >> "$GITHUB_OUTPUT"
-          echo "ami_name=${ami_name}" >> "$GITHUB_OUTPUT"
-        fi
+        matrix_json = custom_data.get("environment_matrix", "")
+        if not isinstance(matrix_json, str) or not matrix_json or matrix_json == "null":
+          fail("Environment matrix missing from manifest")
+        try:
+          json.loads(matrix_json)
+        except json.JSONDecodeError:
+          fail("Environment matrix is not valid JSON")
 
-        if [ "$kind" = "docker" ]; then
-          docker_tags_json=$(jq -r '.builds[0].custom_data.docker_tags // ""' "$manifest_path")
-          image_tag=$(echo "$docker_tags_json" | jq -r '.[0] // ""')
-          if [ -z "$image_tag" ]; then
-            echo "Image tag missing from manifest" >&2
-            exit 1
-          fi
-          if [ "$(echo "$docker_tags_json" | jq -r 'length')" -ne 1 ]; then
-            echo "Expected exactly one docker tag, got: $docker_tags_json" >&2
-            exit 1
-          fi
+        output_path = os.environ.get("GITHUB_OUTPUT")
+        if not output_path:
+          fail("GITHUB_OUTPUT is not set")
 
-          image_repo="${{ inputs.image_repo }}"
-          if [ -z "$image_repo" ]; then
-            echo "image_repo input is required for docker kind" >&2
-            exit 1
-          fi
+        with open(output_path, "a", encoding="utf-8") as output:
+          output.write(f"environment_matrix={matrix_json}\n")
 
-          echo "image_repo=${image_repo}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-        fi
+          if kind == "ami":
+            artifact_id = build.get("artifact_id", "")
+            if not artifact_id:
+              fail("AMI artifact identifier missing from manifest")
+            ami_id = artifact_id.split(":", 1)[-1]
+            ami_name = custom_data.get("ami_base_name", "")
+            output.write(f"ami_id={ami_id}\n")
+            output.write(f"ami_name={ami_name}\n")
 
-        echo "Collected packer metadata:"
-        jq '.builds[0].custom_data' "$manifest_path"
+          if kind == "docker":
+            docker_tags_json = custom_data.get("docker_tags", "")
+            if not isinstance(docker_tags_json, str):
+              fail("Docker tags missing from manifest")
+            try:
+              docker_tags = json.loads(docker_tags_json)
+            except json.JSONDecodeError:
+              fail(f"Docker tags are not valid JSON: {docker_tags_json}")
+            if not isinstance(docker_tags, list) or len(docker_tags) != 1:
+              fail(f"Expected exactly one docker tag, got: {docker_tags_json}")
+            image_tag = docker_tags[0]
+            if not isinstance(image_tag, str) or not image_tag:
+              fail("Image tag missing from manifest")
+            if not image_repo_input:
+              fail("image_repo input is required for docker kind")
+            output.write(f"image_repo={image_repo_input}\n")
+            output.write(f"image_tag={image_tag}\n")
+
+        print("Collected packer metadata:")
+        print(json.dumps(custom_data, indent=2, sort_keys=True))
