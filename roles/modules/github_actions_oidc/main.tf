@@ -1,7 +1,15 @@
 locals {
-  trimmed_workflow_filename = trimspace(var.workflow_filename)
-  workflow_ref              = "${var.github_repository}/.github/workflows/${local.trimmed_workflow_filename}@${var.workflow_ref}"
-  oidc_subject              = "repo:${var.github_repository}:job_workflow_ref:${local.workflow_ref}"
+  trimmed_workflow_filenames = [
+    for filename in var.workflow_filenames : trimspace(filename)
+  ]
+  workflow_refs = [
+    for filename in local.trimmed_workflow_filenames :
+    "${var.github_repository}/.github/workflows/${filename}@${var.workflow_ref}"
+  ]
+  oidc_subjects = [
+    for workflow_ref in local.workflow_refs :
+    "repo:${var.github_repository}:job_workflow_ref:${workflow_ref}"
+  ]
 }
 
 data "aws_iam_policy_document" "assume_role" {
@@ -24,7 +32,7 @@ data "aws_iam_policy_document" "assume_role" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [local.oidc_subject]
+      values   = local.oidc_subjects
     }
   }
 }

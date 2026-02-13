@@ -1,6 +1,6 @@
-output "oidc_subject" {
-  description = "Custom GitHub Actions OIDC subject string that is allowed to assume the role."
-  value       = local.oidc_subject
+output "oidc_subjects" {
+  description = "Custom GitHub Actions OIDC subject strings that are allowed to assume the role."
+  value       = local.oidc_subjects
 }
 
 output "assume_role_policy" {

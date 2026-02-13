@@ -10,7 +10,7 @@ output "test_runner_role_arn" {
 
 output "test_runner_oidc_subject" {
   description = "Custom GitHub Actions OIDC subject string that is allowed to assume the AMI test runner role."
-  value       = module.workflow_oidc.oidc_subject
+  value       = module.workflow_oidc.oidc_subjects[0]
 }
 
 output "instance_role_name" {
