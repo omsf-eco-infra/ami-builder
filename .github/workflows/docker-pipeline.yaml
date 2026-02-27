@@ -60,6 +60,9 @@ jobs:
     name: Build Docker image
     needs: start-aws-runner
     runs-on: ${{ fromJson(needs.start-aws-runner.outputs.instances) }}
+    env:
+      # Self-hosted runner jobs may not define HOME; setup-packer/packer requires it.
+      HOME: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
     outputs:
       image_repo: ${{ steps.collect.outputs.image_repo }}
       image_tag: ${{ steps.collect.outputs.image_tag }}
