@@ -74,12 +74,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if command -v unzip >/dev/null 2>&1; then
+          if command -v unzip >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
             exit 0
           fi
 
           sudo apt-get update
-          sudo apt-get install -y unzip
+          sudo apt-get install -y unzip docker.io
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
