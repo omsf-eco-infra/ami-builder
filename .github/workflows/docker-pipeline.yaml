@@ -17,12 +17,14 @@ env:
   DOCKER_REPO: ghcr.io/omsf-eco-infra/omsf
   AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
   AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
-  AWS_GHA_RUNNER_INSTANCE_TYPE: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE }}
+  AWS_GHA_BUILD_RUNNER_INSTANCE_TYPE: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE }}
+  # Match AMI test-stage instance type in ami-pipeline.yaml.
+  AWS_GHA_TEST_RUNNER_INSTANCE_TYPE: g5.xlarge
   AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
 
 jobs:
-  start-aws-runner:
-    name: Start AWS self-hosted runner
+  start-aws-build-runner:
+    name: Start AWS self-hosted build runner
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -35,14 +37,14 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
-          role-session-name: gha-start-docker-runner
+          role-session-name: gha-start-docker-build-runner
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Validate runner configuration
         run: |
           set -euo pipefail
           : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
-          : "${AWS_GHA_RUNNER_INSTANCE_TYPE:?Repository variable AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE is required}"
+          : "${AWS_GHA_BUILD_RUNNER_INSTANCE_TYPE:?Repository variable AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE is required}"
 
       - name: Start runner
         id: aws-start
@@ -50,7 +52,7 @@ jobs:
         with:
           aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
           aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
-          aws_instance_type: ${{ env.AWS_GHA_RUNNER_INSTANCE_TYPE }}
+          aws_instance_type: ${{ env.AWS_GHA_BUILD_RUNNER_INSTANCE_TYPE }}
           aws_region_name: ${{ env.AWS_REGION }}
           aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
         env:
@@ -58,8 +60,8 @@ jobs:
 
   build-docker:
     name: Build Docker image
-    needs: start-aws-runner
-    runs-on: ${{ fromJson(needs.start-aws-runner.outputs.instances) }}
+    needs: start-aws-build-runner
+    runs-on: ${{ fromJson(needs.start-aws-build-runner.outputs.instances) }}
     env:
       # Self-hosted runner jobs may not define HOME; setup-packer/packer requires it.
       HOME: /home/ubuntu
@@ -118,10 +120,10 @@ jobs:
           set -euo pipefail
           docker push "${{ steps.collect.outputs.image_repo }}:${{ steps.collect.outputs.image_tag }}"
 
-  stop-aws-runner:
-    name: Stop AWS self-hosted runner
-    needs: [start-aws-runner, build-docker]
-    if: ${{ always() && needs.start-aws-runner.outputs.mapping != '' }}
+  stop-aws-build-runner:
+    name: Stop AWS self-hosted build runner
+    needs: [start-aws-build-runner, build-docker]
+    if: ${{ always() && needs.start-aws-build-runner.outputs.mapping != '' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -131,27 +133,75 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
-          role-session-name: gha-stop-docker-runner
+          role-session-name: gha-stop-docker-build-runner
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Stop runner
         uses: omsf/stop-aws-gha-runner@v1.0.0
         with:
-          instance_mapping: ${{ needs.start-aws-runner.outputs.mapping }}
+          instance_mapping: ${{ needs.start-aws-build-runner.outputs.mapping }}
           aws_region_name: ${{ env.AWS_REGION }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+
+  start-aws-test-runner:
+    name: Start AWS self-hosted test runner
+    needs: build-docker
+    if: ${{ needs.build-docker.outputs.image_repo != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      mapping: ${{ steps.aws-start.outputs.mapping }}
+      instances: ${{ steps.aws-start.outputs.instances }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
+          role-session-name: gha-start-docker-test-runner
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate runner configuration
+        run: |
+          set -euo pipefail
+          : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
+          : "${AWS_GHA_TEST_RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
+
+      - name: Start runner
+        id: aws-start
+        uses: omsf/start-aws-gha-runner@v1.0.0
+        with:
+          aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
+          aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
+          aws_instance_type: ${{ env.AWS_GHA_TEST_RUNNER_INSTANCE_TYPE }}
+          aws_region_name: ${{ env.AWS_REGION }}
+          aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
 
   test-environment:
     name: Test environment (${{ matrix.environment.name }})
-    needs: build-docker
+    needs: [build-docker, start-aws-test-runner]
     if: ${{ needs.build-docker.outputs.image_repo != '' }}
     strategy:
       fail-fast: false
       matrix:
         environment: ${{ fromJson(needs.build-docker.outputs.environment_matrix) }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJson(needs.start-aws-test-runner.outputs.instances) }}
     steps:
+      - name: Ensure runner dependencies (Ubuntu)
+        run: |
+          set -euo pipefail
+
+          if command -v docker >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+
       - name: Log in to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -169,3 +219,27 @@ jobs:
             -e "MICROMAMBA_DEFAULT_ENVIRONMENT=${env_name}" \
             "${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}" \
             bash -lc "/tmp/environments/${env_name}/full-tests.sh"
+
+  stop-aws-test-runner:
+    name: Stop AWS self-hosted test runner
+    needs: [start-aws-test-runner, test-environment]
+    if: ${{ always() && needs.start-aws-test-runner.outputs.mapping != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
+          role-session-name: gha-stop-docker-test-runner
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Stop runner
+        uses: omsf/stop-aws-gha-runner@v1.0.0
+        with:
+          instance_mapping: ${{ needs.start-aws-test-runner.outputs.mapping }}
+          aws_region_name: ${{ env.AWS_REGION }}
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
