@@ -66,7 +66,7 @@ locals {
   available_environment_names      = sort(keys(local.available_environment_paths))
   requested_environment_names      = length(var.environments) > 0 ? var.environments : local.available_environment_names
   normalized_environment_names     = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
-  enabled_environment_names        = sort(distinct(local.normalized_environment_names))
+  enabled_environment_names        = distinct(local.normalized_environment_names)
   missing_environment_names        = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
 
   environment_smoke_scripts = {

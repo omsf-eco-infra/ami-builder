@@ -88,7 +88,7 @@ echo "[setup_env] Installing profile hook in /etc/profile.d/micromamba.sh"
 
 # Add a profile script so login shells can easily use micromamba
 maybe_sudo tee /etc/profile.d/micromamba.sh >/dev/null <<EOF
-export MAMBA_ROOT_PREFIX=${MAMBA_ROOT_PREFIX}
+export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX}"
 export MICROMAMBA_ENVIRONMENTS="${available_envs_str}"
 export MICROMAMBA_DEFAULT_ENVIRONMENT="${default_env_name}"
 if command -v micromamba >/dev/null 2>&1; then
