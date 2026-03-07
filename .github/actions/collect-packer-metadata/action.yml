@@ -1,0 +1,116 @@
+name: Collect Packer Metadata
+description: Parse a Packer manifest and emit normalized build metadata outputs.
+
+inputs:
+  manifest_path:
+    description: Path to the Packer manifest file.
+    required: true
+  kind:
+    description: Manifest kind to parse (ami or docker).
+    required: true
+  image_repo:
+    description: Docker image repository to emit for docker manifests.
+    required: false
+    default: ""
+
+outputs:
+  environment_matrix:
+    description: JSON environment matrix emitted by the Packer template.
+    value: ${{ steps.collect.outputs.environment_matrix }}
+  ami_id:
+    description: AMI ID (without artifact prefix), for ami manifests.
+    value: ${{ steps.collect.outputs.ami_id }}
+  ami_name:
+    description: AMI logical name from manifest custom data, for ami manifests.
+    value: ${{ steps.collect.outputs.ami_name }}
+  image_repo:
+    description: Docker image repository, for docker manifests.
+    value: ${{ steps.collect.outputs.image_repo }}
+  image_tag:
+    description: Docker image tag, for docker manifests.
+    value: ${{ steps.collect.outputs.image_tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Collect metadata
+      id: collect
+      shell: python
+      run: |
+        import json
+        import os
+        import sys
+        from pathlib import Path
+
+        manifest_path = Path("${{ inputs.manifest_path }}")
+        kind = "${{ inputs.kind }}"
+        image_repo_input = "${{ inputs.image_repo }}"
+
+        def fail(message: str) -> None:
+          print(message, file=sys.stderr)
+          raise SystemExit(1)
+
+        if not manifest_path.is_file():
+          fail(f"Packer manifest not found at {manifest_path}")
+
+        if kind not in {"ami", "docker"}:
+          fail(f"Unsupported kind '{kind}'. Expected 'ami' or 'docker'.")
+
+        try:
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+          fail(f"Manifest is not valid JSON: {exc}")
+
+        builds = manifest.get("builds")
+        if not isinstance(builds, list) or not builds:
+          fail("Manifest does not contain builds[0].")
+
+        build = builds[0]
+        custom_data = build.get("custom_data")
+        if not isinstance(custom_data, dict):
+          fail("Manifest custom_data is missing or invalid.")
+
+        matrix_json = custom_data.get("environment_matrix", "")
+        if not isinstance(matrix_json, str) or not matrix_json or matrix_json == "null":
+          fail("Environment matrix missing from manifest")
+        try:
+          json.loads(matrix_json)
+        except json.JSONDecodeError:
+          fail("Environment matrix is not valid JSON")
+
+        output_path = os.environ.get("GITHUB_OUTPUT")
+        if not output_path:
+          fail("GITHUB_OUTPUT is not set")
+
+        with open(output_path, "a", encoding="utf-8") as output:
+          output.write(f"environment_matrix={matrix_json}\n")
+
+          if kind == "ami":
+            artifact_id = build.get("artifact_id", "")
+            if not artifact_id:
+              fail("AMI artifact identifier missing from manifest")
+            ami_id = artifact_id.split(":", 1)[-1]
+            ami_name = custom_data.get("ami_base_name", "")
+            output.write(f"ami_id={ami_id}\n")
+            output.write(f"ami_name={ami_name}\n")
+
+          if kind == "docker":
+            docker_tags_json = custom_data.get("docker_tags", "")
+            if not isinstance(docker_tags_json, str):
+              fail("Docker tags missing from manifest")
+            try:
+              docker_tags = json.loads(docker_tags_json)
+            except json.JSONDecodeError:
+              fail(f"Docker tags are not valid JSON: {docker_tags_json}")
+            if not isinstance(docker_tags, list) or len(docker_tags) != 1:
+              fail(f"Expected exactly one docker tag, got: {docker_tags_json}")
+            image_tag = docker_tags[0]
+            if not isinstance(image_tag, str) or not image_tag:
+              fail("Image tag missing from manifest")
+            if not image_repo_input:
+              fail("image_repo input is required for docker kind")
+            output.write(f"image_repo={image_repo_input}\n")
+            output.write(f"image_tag={image_tag}\n")
+
+        print("Collected packer metadata:")
+        print(json.dumps(custom_data, indent=2, sort_keys=True))

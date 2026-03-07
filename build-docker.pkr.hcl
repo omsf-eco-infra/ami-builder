@@ -1,20 +1,26 @@
 packer {
   required_plugins {
-    amazon = {
-      source  = "github.com/hashicorp/amazon"
-      version = ">= 1.3.0"
+    docker = {
+      source  = "github.com/hashicorp/docker"
+      version = ">= 1.0.0"
     }
   }
 }
 
-variable "aws_region" {
-  description = "AWS region where the AMI build will run."
+variable "docker_base_image" {
+  description = "Base CUDA image to build from."
   type        = string
-  default     = "us-east-1"
+  default     = "nvidia/cuda:12.8.0-runtime-ubuntu24.04"
+}
+
+variable "docker_repository" {
+  description = "Target Docker repository (e.g., ghcr.io/org/image)."
+  type        = string
+  default     = "ghcr.io/omsf-eco-infra/omsf"
 }
 
 variable "ami_name" {
-  description = "Logical name for the AMI variant."
+  description = "Logical name for the Docker image variant (matches AMI naming)."
   type        = string
 
   validation {
@@ -35,13 +41,13 @@ variable "environments" {
 }
 
 variable "ami_name_suffix" {
-  description = "Optional suffix appended to the AMI base name; hyphen is added automatically if needed."
+  description = "Optional suffix appended to the AMI/Docker base name; hyphen is added automatically if needed."
   type        = string
   default     = ""
 }
 
 variable "additional_tags" {
-  description = "JSON string of additional AMI tags merged with the default tag set."
+  description = "JSON string of additional metadata tags merged with the default label set."
   type        = string
   default     = "{}"
 }
@@ -49,7 +55,7 @@ variable "additional_tags" {
 locals {
   ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
-  ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
+  ami_base_with_suffix = local.ami_name_suffix == "" ? local.ami_base_name : "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
 
   available_environment_paths = {
@@ -60,7 +66,7 @@ locals {
   available_environment_names      = sort(keys(local.available_environment_paths))
   requested_environment_names      = length(var.environments) > 0 ? var.environments : local.available_environment_names
   normalized_environment_names     = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
-  enabled_environment_names        = sort(distinct(local.normalized_environment_names))
+  enabled_environment_names        = distinct(local.normalized_environment_names)
   missing_environment_names        = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
 
   environment_smoke_scripts = {
@@ -104,6 +110,7 @@ locals {
     default_environment  = local.default_environment
     environments_label   = local.environments_label
     environment_matrix   = local.environment_matrix_json
+    docker_tags          = jsonencode(local.tag_list)
   }
 
   remote_environment_root = "/tmp/environments"
@@ -111,7 +118,7 @@ locals {
   environment_directories = [for env in local.enabled_environment_names : "${local.remote_environment_root}/${env}"]
   environment_dirs_string = trimspace(join(" ", local.environment_directories))
 
-  base_tags = {
+  base_labels = {
     Name         = local.ami_base_with_suffix
     built_with   = "packer"
     managed_by   = "omsf-ami-builder"
@@ -119,84 +126,41 @@ locals {
     status       = "ephemeral"
   }
 
-  merged_tags = merge(local.base_tags, jsondecode(var.additional_tags))
+  merged_labels = merge(local.base_labels, local.build_metadata, jsondecode(var.additional_tags))
+
+  primary_tag = "${local.ami_base_with_suffix}-{{timestamp}}"
+  tag_list    = [local.primary_tag]
+
+  label_changes = [for key, value in local.merged_labels : "LABEL ${key}=${jsonencode(value)}"]
 }
 
-source "amazon-ebs" "this" {
-  region        = var.aws_region
-  instance_type = "t3.large"
-
-  source_ami_filter {
-    filters = {
-      name                = "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
-      architecture        = "x86_64"
-      root-device-type    = "ebs"
-      virtualization-type = "hvm"
-    }
-
-    owners      = ["099720109477"] # Canonical
-    most_recent = true
-  }
-
-  ssh_username = "ubuntu"
-
-  ami_name        = local.ami_name
-  ami_description = "[OMSF] Ubuntu + NVIDIA + environments: ${local.environments_label}"
-
-  ami_groups = []
-
-  launch_block_device_mappings {
-    device_name           = "/dev/sda1"
-    volume_size           = 50
-    volume_type           = "gp3"
-    delete_on_termination = true
-  }
-
-  ami_block_device_mappings {
-    device_name           = "/dev/sda1"
-    volume_size           = 50
-    volume_type           = "gp3"
-    delete_on_termination = true
-  }
-
-  aws_polling {
-    max_attempts = 2000
-  }
-
-  run_tags = {
-    Name         = "ami-builder-${local.ami_base_with_suffix}"
-    template     = local.ami_base_with_suffix
-    environments = local.environments_label
-  }
-
-  tags = local.merged_tags
+source "docker" "this" {
+  image  = var.docker_base_image
+  commit = true
+  changes = concat([
+    "ENV MAMBA_ROOT_PREFIX=/opt/micromamba",
+    "ENV MICROMAMBA_DEFAULT_ENVIRONMENT=${local.default_environment}",
+    "ENV MICROMAMBA_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
+    "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
+    "CMD [\"bash\", \"-l\"]",
+  ], local.label_changes)
 }
 
 build {
   name    = local.ami_base_with_suffix
-  sources = ["source.amazon-ebs.this"]
+  sources = ["source.docker.this"]
 
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "echo '[install base] Installing prerequisite packages'",
       "set -euxo pipefail",
-      "sudo apt-get update",
-      "sudo apt-get install -y curl bzip2",
+      "apt-get update",
+      "apt-get install -y --no-install-recommends curl bzip2 ca-certificates",
+      "rm -rf /var/lib/apt/lists/*",
     ]
   }
 
-  provisioner "shell" {
-    inline_shebang = "/usr/bin/env bash"
-    inline = [
-      "set -euxo pipefail",
-      "sudo apt-get install -y --no-install-recommends build-essential dkms linux-headers-$(uname -r) pciutils",
-      "sudo apt-get install -y --no-install-recommends nvidia-dkms-550 nvidia-utils-550 nvidia-driver-550",
-      "sudo systemctl enable nvidia-persistenced || true",
-    ]
-  }
-
-  ## Micromamba environments
   provisioner "file" {
     source      = "build-scripts/lib.sh"
     destination = "/tmp/lib.sh"
@@ -204,14 +168,17 @@ build {
 
   provisioner "shell" {
     script = "build-scripts/install-micromamba.sh"
+    environment_vars = [
+      "BUILD_ENV=docker",
+      "MAMBA_ROOT_PREFIX=/opt/micromamba",
+    ]
   }
 
-  # copy over environment files and scripts
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "set -euxo pipefail",
-      "sudo rm -rf \"${local.remote_environment_root}\"",
+      "rm -rf \"${local.remote_environment_root}\"",
     ]
   }
 
@@ -225,12 +192,11 @@ build {
     inline = [
       "set -euxo pipefail",
       "if [ -d \"${local.remote_environment_root}\" ]; then",
-      "  sudo chown -R ubuntu:ubuntu \"${local.remote_environment_root}\"",
+      "  chown -R root:root \"${local.remote_environment_root}\"",
       "fi",
     ]
   }
 
-  # environment validation
   provisioner "shell" {
     script = "build-scripts/validate-environments.sh"
     environment_vars = [
@@ -246,14 +212,26 @@ build {
     environment_vars = [
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
+      "BUILD_ENV=docker",
+      "MAMBA_ROOT_PREFIX=/opt/micromamba",
+      "MAMBA_EXTRACT_THREADS=1",
+      "MAMBA_DOWNLOAD_THREADS=1",
+      "MAMBA_NO_BANNER=1",
     ]
   }
 
-  ## Smoke tests
-  provisioner "shell" {
-    script = "build-scripts/nvidia-smoke-test.sh"
+  provisioner "file" {
+    source      = "build-scripts/docker-entrypoint.sh"
+    destination = "/usr/local/bin/omsf-entrypoint.sh"
   }
 
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "chmod 755 /usr/local/bin/omsf-entrypoint.sh",
+    ]
+  }
   dynamic "provisioner" {
     for_each = local.enabled_environment_names
     labels   = ["shell"]
@@ -261,13 +239,33 @@ build {
       script = "build-scripts/smoke-test.sh"
       environment_vars = [
         "MICROMAMBA_ENV_NAME=${provisioner.value}",
+        "BUILD_ENV=docker",
+        "MAMBA_ROOT_PREFIX=/opt/micromamba",
+        "ENVIRONMENT_DIR_ROOT=${local.remote_environment_root}",
+        "KMP_AFFINITY=disabled",
+        "OMP_NUM_THREADS=1",
+        "OMP_PROC_BIND=false",
+        "OMP_PLACES=cores",
       ]
       execute_command = "chmod +x '{{ .Path }}'; {{ .Vars }} '{{ .Path }}' '${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh'"
     }
   }
 
+  provisioner "shell" {
+    inline_shebang = "/usr/bin/env bash"
+    inline = [
+      "set -euxo pipefail",
+      "/usr/local/bin/micromamba clean -a -y || true",
+    ]
+  }
+
+  post-processor "docker-tag" {
+    repository = var.docker_repository
+    tags       = local.tag_list
+  }
+
   post-processor "manifest" {
-    output      = "packer-manifest.json"
+    output      = "packer-docker-manifest.json"
     custom_data = local.build_metadata
   }
 }

@@ -142,35 +142,10 @@ jobs:
 
       - name: Collect packer manifest outputs
         id: collect
-        run: |
-          set -euo pipefail
-          manifest_path="packer-manifest.json"
-          if [ ! -f "$manifest_path" ]; then
-            echo "Packer manifest not found at $manifest_path" >&2
-            ls -al
-            exit 1
-          fi
-          ami_id=$(jq -r '.builds[0].artifact_id // empty' "$manifest_path")
-          if [ -z "$ami_id" ]; then
-            echo "AMI artifact identifier missing from manifest" >&2
-            exit 1
-          fi
-          ami_id=${ami_id##*:}
-          ami_name=$(jq -r '.builds[0].custom_data.ami_base_name // ""' "$manifest_path")
-          matrix=$(jq -r '.builds[0].custom_data.environment_matrix // ""' "$manifest_path")
-          if [ -z "$matrix" ] || [ "$matrix" = "null" ]; then
-            echo "Environment matrix missing from manifest" >&2
-            exit 1
-          fi
-          if ! echo "$matrix" | jq -e . >/dev/null; then
-            echo "Environment matrix is not valid JSON" >&2
-            exit 1
-          fi
-          echo "ami_id=$ami_id" >> "$GITHUB_OUTPUT"
-          echo "ami_name=$ami_name" >> "$GITHUB_OUTPUT"
-          echo "environment_matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "Collected packer metadata:"
-          jq '.builds[0].custom_data' "$manifest_path"
+        uses: ./.github/actions/collect-packer-metadata
+        with:
+          manifest_path: packer-manifest.json
+          kind: ami
 
   test-environment:
     name: Test environment (${{ matrix.environment.name }})

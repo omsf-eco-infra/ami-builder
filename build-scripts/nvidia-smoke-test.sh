@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib.sh" ]]; then
+  # shellcheck source=build-scripts/lib.sh
+  source "${SCRIPT_DIR}/lib.sh"
+elif [[ -f "/tmp/lib.sh" ]]; then
+  # shellcheck source=/tmp/lib.sh
+  source "/tmp/lib.sh"
+else
+  echo "[nvidia_smoke_test] lib.sh not found" >&2
+  exit 1
+fi
+
+if [[ "${BUILD_ENV}" == "docker" ]]; then
+  echo "[nvidia docker check] Checking nvidia-smi availability"
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    echo "nvidia-smi not found; skipping GPU checks in Docker mode"
+    exit 0
+  fi
+  nvidia-smi -L || {
+    echo "nvidia-smi failed; GPU runtime may be unavailable"; exit 1
+  }
+  exit 0
+fi
+
 echo "[nvidia module check] Checking DKMS + module availability"
 dpkg -l | grep -E "nvidia-(dkms|driver|utils)" || {
   echo "NVIDIA driver packages not installed"; exit 1
