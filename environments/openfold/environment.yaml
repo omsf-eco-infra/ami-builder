@@ -28,7 +28,7 @@ dependencies:
   - ijson
   - deepspeed
   - pdbeccdutils
-  - nvidia-cutlass<4
+  - cutlass<4
   - cuda-python<12.9.1
   - pip
   - pip:
