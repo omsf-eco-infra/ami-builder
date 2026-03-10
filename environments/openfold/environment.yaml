@@ -1,0 +1,35 @@
+name: openfold
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - kalign3
+  - cudatoolkit-dev
+  - awscli
+  - pytorch
+  - pytorch-lightning>=2.1
+  - numpy
+  - pandas
+  - pyyaml
+  - requests
+  - scipy
+  - tqdm
+  - typing-extensions
+  - wandb
+  - ml-collections
+  - mkl
+  - aria2
+  - biotite>=1.1.0,<1.3
+  - rdkit
+  - boto3
+  - memory_profiler
+  - func_timeout
+  - lmdb
+  - ijson
+  - deepspeed
+  - pdbeccdutils
+  - nvidia-cutlass<4
+  - cuda-python<12.9.1
+  - pip
+  - pip:
+      - openfold3
