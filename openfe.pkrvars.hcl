@@ -1,2 +1,2 @@
 ami_name = "openfe"
-environments = ["openfe"]
+environments = ["openfe", "openfold"]
