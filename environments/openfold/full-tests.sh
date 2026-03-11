@@ -7,11 +7,11 @@ set -euo pipefail
 echo "[full-tests] Running placeholder full tests for openfold environment"
 
 # Basic environment validation
-python -c "import openfold; print(f'OpenFold version: {openfold.__version__ if hasattr(openfold, \"__version__\") else \"unknown\"}')"
+python -c "import openfold3; print(f'OpenFold version: {openfold3.__version__ if hasattr(openfold3, \"__version__\") else \"unknown\"}')"
 
 # Test basic functionality (placeholder)
 python -c "
-import openfold
+import openfold3
 print('OpenFold import successful')
 
 # Add more comprehensive tests here as needed
