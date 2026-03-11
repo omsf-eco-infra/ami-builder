@@ -50,6 +50,9 @@ RUN_AS_USER="ubuntu"
 TIMEOUT=3600
 POLL_INTERVAL=5
 TAIL_LOGS="true"
+# Tracks whether CloudWatch log tailing is actually active, so failure fallback
+# output is only printed when streaming logs were unavailable.
+TAIL_ACTIVE="false"
 COMMENT="AMI test via SSM"
 
 while [[ $# -gt 0 ]]; do
@@ -161,8 +164,10 @@ SSM_COMMANDS=(
 )
 
 PARAMS_FILE=$(mktemp)
+INVOCATION_FILE=$(mktemp)
 cleanup() {
   rm -f "$PARAMS_FILE"
+  rm -f "$INVOCATION_FILE"
   if [[ -n "${TAIL_PID:-}" ]]; then
     kill "$TAIL_PID" >/dev/null 2>&1 || true
     wait "$TAIL_PID" >/dev/null 2>&1 || true
@@ -177,6 +182,62 @@ raw = os.environ.get("SSM_COMMANDS", "")
 cmds = raw.splitlines()
 print(json.dumps({"commands": cmds}))
 PY
+
+print_invocation_output() {
+  local attempts=0
+  local max_attempts=5
+  local fetch_ok="false"
+
+  while (( attempts < max_attempts )); do
+    if aws "${AWS_REGION_OPT[@]}" "${AWS_PROFILE_OPT[@]}" ssm get-command-invocation \
+      --command-id "$COMMAND_ID" \
+      --instance-id "$INSTANCE_ID" \
+      --output json >"$INVOCATION_FILE" 2>/dev/null; then
+      fetch_ok="true"
+      break
+    fi
+    attempts=$((attempts + 1))
+    sleep 2
+  done
+
+  if [[ "$fetch_ok" != "true" ]]; then
+    echo "[run_tests_ssm] Could not retrieve final command invocation details for ${COMMAND_ID}" >&2
+    return
+  fi
+
+  "$PYTHON_BIN" - "$INVOCATION_FILE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fp:
+    data = json.load(fp)
+
+status = data.get("Status") or "unknown"
+status_details = data.get("StatusDetails") or "unknown"
+response_code = data.get("ResponseCode")
+stdout = (data.get("StandardOutputContent") or "").strip()
+stderr = (data.get("StandardErrorContent") or "").strip()
+
+print(
+    f"[run_tests_ssm] Final invocation status: {status} "
+    f"(details: {status_details}, response: {response_code})"
+)
+if stdout:
+    print("[run_tests_ssm] --- Begin remote stdout ---")
+    print(stdout)
+    print("[run_tests_ssm] --- End remote stdout ---")
+if stderr:
+    print("[run_tests_ssm] --- Begin remote stderr ---", file=sys.stderr)
+    print(stderr, file=sys.stderr)
+    print("[run_tests_ssm] --- End remote stderr ---", file=sys.stderr)
+if not stdout and not stderr:
+    print(
+        "[run_tests_ssm] No inline SSM output captured; "
+        "CloudWatch logs may still contain additional details."
+    )
+PY
+}
 
 COMMAND_ID=$(aws "${AWS_REGION_OPT[@]}" "${AWS_PROFILE_OPT[@]}" ssm send-command \
   --document-name "AWS-RunShellScript" \
@@ -216,6 +277,7 @@ if [[ "$TAIL_LOGS" == "true" ]]; then
     TAIL_PID=$!
     sleep 2
     if ! kill -0 "$TAIL_PID" >/dev/null 2>&1; then
+      TAIL_ACTIVE="false"
       if [[ -z "$LOG_STREAM" && -z "$LOG_STREAM_PREFIX" ]]; then
         echo "[run_tests_ssm] Log stream '${DEFAULT_STREAM}' not yet available; retrying with stream prefix '${DEFAULT_PREFIX}' (SSM-managed fallback)" >&2
         LOG_TAIL_ARGS=(--log-stream-name-prefix "$DEFAULT_PREFIX")
@@ -227,14 +289,19 @@ if [[ "$TAIL_LOGS" == "true" ]]; then
           echo "[run_tests_ssm] Failed to start log tail for ${LOG_TAIL_DESC}; continuing without streaming" >&2
           TAIL_LOGS="false"
           TAIL_PID=""
+          TAIL_ACTIVE="false"
         else
           echo "[run_tests_ssm] Streaming CloudWatch Logs from ${LOG_TAIL_DESC}"
+          TAIL_ACTIVE="true"
         fi
       else
         echo "[run_tests_ssm] Failed to start log tail for ${LOG_TAIL_DESC}; continuing without streaming" >&2
         TAIL_LOGS="false"
         TAIL_PID=""
+        TAIL_ACTIVE="false"
       fi
+    else
+      TAIL_ACTIVE="true"
     fi
   fi
 fi
@@ -272,5 +339,9 @@ while :; do
       ;;
   esac
 done
+
+if (( EXIT_CODE != 0 )) && [[ "$TAIL_ACTIVE" != "true" ]]; then
+  print_invocation_output
+fi
 
 exit "$EXIT_CODE"
