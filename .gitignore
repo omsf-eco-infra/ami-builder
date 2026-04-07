@@ -42,6 +42,9 @@ terraform.rc
 .pixi
 *.egg-info
 
+# environments/pixi.lock is generated fresh in CI (not committed)
+environments/pixi.lock
+
 # Python
 __pycache__/
 .coverage

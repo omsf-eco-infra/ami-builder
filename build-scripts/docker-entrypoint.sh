@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -n "${MICROMAMBA_DEFAULT_ENVIRONMENT:-}" ]]; then
-  if command -v micromamba >/dev/null 2>&1; then
-    export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
-    eval "$(micromamba shell hook -s bash)"
-    micromamba activate "${MICROMAMBA_DEFAULT_ENVIRONMENT}"
+if [[ -n "${PIXI_DEFAULT_ENVIRONMENT:-}" ]]; then
+  workspace="${OMSF_PIXI_WORKSPACE:-${HOME}}"
+  if [[ -f "${workspace}/pixi.toml" ]]; then
+    eval "$(pixi shell-hook -m "${workspace}" -e "${PIXI_DEFAULT_ENVIRONMENT}" --shell bash --frozen)"
   fi
 fi
 
