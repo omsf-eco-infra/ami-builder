@@ -52,17 +52,6 @@ locals {
   ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
 
-  available_environment_paths = {
-    for path in fileset(path.root, "environments/*/environment.yaml") :
-    basename(dirname(path)) => dirname(path)
-  }
-
-  available_environment_names      = sort(keys(local.available_environment_paths))
-  requested_environment_names      = length(var.environments) > 0 ? var.environments : local.available_environment_names
-  normalized_environment_names     = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
-  enabled_environment_names        = sort(distinct(local.normalized_environment_names))
-  missing_environment_names        = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
-
   environment_smoke_scripts = {
     for path in fileset(path.root, "environments/*/smoke-tests.sh") :
     basename(dirname(path)) => path
@@ -72,6 +61,21 @@ locals {
     for path in fileset(path.root, "environments/*/full-tests.sh") :
     basename(dirname(path)) => path
   }
+
+  available_environment_paths = {
+    for env in sort(distinct(concat(
+      keys(local.environment_smoke_scripts),
+      keys(local.environment_full_scripts),
+    ))) :
+    env => "environments/${env}"
+  }
+
+  available_environment_names  = sort(keys(local.available_environment_paths))
+  requested_environment_names  = length(var.environments) > 0 ? var.environments : local.available_environment_names
+  normalized_environment_names = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
+  enabled_environment_names    = sort(distinct(local.normalized_environment_names))
+  missing_environment_names    = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
+  staged_environment_names     = [for env in local.enabled_environment_names : env if !contains(local.missing_environment_names, env)]
 
   environment_matrix = [
     for env in local.enabled_environment_names : {
@@ -107,6 +111,9 @@ locals {
   }
 
   remote_environment_root = "/tmp/environments"
+  remote_pixi_manifest    = "${local.remote_environment_root}/pixi.toml"
+  remote_pixi_lock        = "${local.remote_environment_root}/pixi.lock"
+  remote_pixi_helper      = "${local.remote_environment_root}/pixi-environment-metadata.py"
 
   environment_directories = [for env in local.enabled_environment_names : "${local.remote_environment_root}/${env}"]
   environment_dirs_string = trimspace(join(" ", local.environment_directories))
@@ -182,7 +189,7 @@ build {
       "echo '[install base] Installing prerequisite packages'",
       "set -euxo pipefail",
       "sudo apt-get update",
-      "sudo apt-get install -y curl bzip2",
+      "sudo apt-get install -y curl bzip2 ca-certificates python3",
     ]
   }
 
@@ -196,14 +203,14 @@ build {
     ]
   }
 
-  ## Micromamba environments
+  ## Pixi runtime environments
   provisioner "file" {
     source      = "build-scripts/lib.sh"
     destination = "/tmp/lib.sh"
   }
 
   provisioner "shell" {
-    script = "build-scripts/install-micromamba.sh"
+    script = "build-scripts/install-pixi.sh"
   }
 
   # copy over environment files and scripts
@@ -212,22 +219,33 @@ build {
     inline = [
       "set -euxo pipefail",
       "sudo rm -rf \"${local.remote_environment_root}\"",
+      "sudo mkdir -p \"${local.remote_environment_root}\"",
+      "sudo chown ubuntu:ubuntu \"${local.remote_environment_root}\"",
     ]
   }
 
   provisioner "file" {
-    source      = "environments"
-    destination = "/tmp"
+    source      = "environments/pixi.toml"
+    destination = "${local.remote_pixi_manifest}"
   }
 
-  provisioner "shell" {
-    inline_shebang = "/usr/bin/env bash"
-    inline = [
-      "set -euxo pipefail",
-      "if [ -d \"${local.remote_environment_root}\" ]; then",
-      "  sudo chown -R ubuntu:ubuntu \"${local.remote_environment_root}\"",
-      "fi",
-    ]
+  provisioner "file" {
+    source      = "environments/pixi.lock"
+    destination = "${local.remote_pixi_lock}"
+  }
+
+  provisioner "file" {
+    source      = "environments/pixi-environment-metadata.py"
+    destination = "${local.remote_pixi_helper}"
+  }
+
+  dynamic "provisioner" {
+    for_each = local.staged_environment_names
+    labels   = ["file"]
+    content {
+      source      = local.available_environment_paths[provisioner.value]
+      destination = local.remote_environment_root
+    }
   }
 
   # environment validation
@@ -238,14 +256,19 @@ build {
       "MISSING_SMOKE=${join(" ", local.missing_smoke_scripts)}",
       "MISSING_FULL=${join(" ", local.missing_full_scripts)}",
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
+      "PIXI_MANIFEST_PATH=${local.remote_pixi_manifest}",
+      "PIXI_METADATA_HELPER=${local.remote_pixi_helper}",
     ]
   }
 
   provisioner "shell" {
-    script = "build-scripts/setup-env.sh"
+    script = "build-scripts/setup-ami-pixi.sh"
     environment_vars = [
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
+      "OMSF_PIXI_WORKSPACE=/home/ubuntu",
+      "PIXI_HOME=/home/ubuntu/.pixi-global",
+      "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
     ]
   }
 
@@ -258,9 +281,11 @@ build {
     for_each = local.enabled_environment_names
     labels   = ["shell"]
     content {
-      script = "build-scripts/smoke-test.sh"
+      script = "build-scripts/ami-pixi-smoke-test.sh"
       environment_vars = [
-        "MICROMAMBA_ENV_NAME=${provisioner.value}",
+        "PIXI_ENV_NAME=${provisioner.value}",
+        "OMSF_PIXI_WORKSPACE=/home/ubuntu",
+        "PIXI_HOME=/home/ubuntu/.pixi-global",
       ]
       execute_command = "chmod +x '{{ .Path }}'; {{ .Vars }} '{{ .Path }}' '${local.remote_environment_root}/${provisioner.value}/smoke-tests.sh'"
     }
