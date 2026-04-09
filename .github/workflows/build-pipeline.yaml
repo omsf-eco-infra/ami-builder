@@ -20,16 +20,22 @@ env:
   DOCKER_REPOSITORY: ghcr.io/omsf-eco-infra/omsf
   AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
   AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
-  AWS_GHA_TEST_RUNNER_INSTANCE_TYPE: g5.xlarge
+  AWS_GHA_TEST_RUNNER_INSTANCE_TYPE: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE || 'g5.xlarge' }}
   AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
 
 jobs:
-  # ── Step 1: Generate lockfile ──────────────────────────────────────
+  # ── Step 1: Prepare shared build inputs ────────────────────────────
   lock-environments:
-    name: Lock environments
+    name: Prepare build context
     runs-on: ubuntu-latest
     outputs:
-      environment_names: ${{ steps.parse.outputs.environment_names }}
+      environment_names: ${{ steps.context.outputs.environment_names }}
+      build_kind: ${{ steps.context.outputs.build_kind }}
+      ami_name_suffix: ${{ steps.context.outputs.ami_name_suffix }}
+      additional_tags: ${{ steps.context.outputs.additional_tags }}
+      aws_region: ${{ steps.context.outputs.aws_region }}
+      default_instance_type: ${{ steps.context.outputs.default_instance_type }}
+      docker_repository: ${{ steps.context.outputs.docker_repository }}
     steps:
       - uses: actions/checkout@v6
 
@@ -54,10 +60,11 @@ jobs:
           path: environments/pixi.lock
           retention-days: 7
 
-      - name: Parse environment names
-        id: parse
+      - name: Compute shared build context
+        id: context
         shell: python
         run: |
+          import datetime
           import json
           import os
           import re
@@ -73,11 +80,54 @@ jobs:
           if not env_names:
               raise SystemExit("No environments found in pixi.toml")
 
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
+              event = json.load(fp)
+
+          now = datetime.datetime.now(datetime.UTC)
+          today = now.strftime("%Y%m%d")
+          full_sha = os.environ["GITHUB_SHA"]
+          short_sha = full_sha[:7]
+          suffix = f"{today}-{short_sha}"
+          extra_tags = {}
+          delete_after_date = now + datetime.timedelta(days=7)
+
+          if event_name == "pull_request":
+              build_kind = "pr"
+              pr_number = event.get("number")
+              head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
+              short_sha = head_sha[:7]
+              suffix = f"pr{pr_number}-{today}-{short_sha}"
+              extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
+          elif event_name in {"schedule", "workflow_dispatch", "push"}:
+              build_kind = {
+                  "schedule": "scheduled",
+                  "workflow_dispatch": "manual",
+                  "push": "push",
+              }[event_name]
+          else:
+              raise SystemExit(f"Unsupported event type for build metadata: {event_name}")
+
+          tags = {
+              "omsf-ami-type": build_kind,
+              "commit": short_sha,
+              "delete-after": delete_after_date.strftime("%Y-%m-%d"),
+          }
+          tags.update(extra_tags)
+
           print(f"Discovered environments: {env_names}")
+          print(f"Build kind: {build_kind}")
+          print(f"Image suffix: {suffix}")
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as fh:
               fh.write(f"environment_names={json.dumps(env_names)}\n")
+              fh.write(f"build_kind={build_kind}\n")
+              fh.write(f"ami_name_suffix={suffix}\n")
+              fh.write(f"additional_tags={json.dumps(tags)}\n")
+              fh.write(f"aws_region={os.environ['AWS_REGION']}\n")
+              fh.write(f"default_instance_type={os.environ['DEFAULT_INSTANCE_TYPE']}\n")
+              fh.write(f"docker_repository={os.environ['DOCKER_REPOSITORY']}\n")
 
   # ── Step 2a: Build AMI ─────────────────────────────────────────────
   build-ami:
@@ -94,8 +144,8 @@ jobs:
       ami_id: ${{ steps.collect.outputs.ami_id }}
       ami_name: ${{ steps.collect.outputs.ami_name }}
       environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
-      aws_region: ${{ steps.config.outputs.aws_region }}
-      default_instance_type: ${{ steps.config.outputs.default_instance_type }}
+      aws_region: ${{ needs.lock-environments.outputs.aws_region }}
+      default_instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
       recommended_state: ${{ steps.recommend.outputs.state }}
     steps:
       - uses: actions/checkout@v6
@@ -105,17 +155,6 @@ jobs:
         with:
           name: pixi-lock
           path: environments
-
-      - name: Export shared config
-        id: config
-        env:
-          AWS_REGION: ${{ env.AWS_REGION }}
-          DEFAULT_INSTANCE_TYPE: ${{ env.DEFAULT_INSTANCE_TYPE }}
-        run: |
-          {
-            echo "aws_region=${AWS_REGION}"
-            echo "default_instance_type=${DEFAULT_INSTANCE_TYPE}"
-          } >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -130,57 +169,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Set build metadata
-        id: metadata
-        shell: python
-        run: |
-          import datetime
-          import json
-          import os
-          from pathlib import Path
-
-          event_name = os.environ["GITHUB_EVENT_NAME"]
-          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
-              event = json.load(fp)
-
-          now = datetime.datetime.utcnow()
-          today = now.strftime("%Y%m%d")
-          full_sha = os.environ["GITHUB_SHA"]
-          short_sha = full_sha[:7]
-          suffix = f"{today}-{short_sha}"
-          extra_tags = {}
-          delete_after_date = now + datetime.timedelta(days=7)
-
-          if event_name == "pull_request":
-              ami_type = "pr"
-              pr_number = event.get("number")
-              head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
-              short_sha = head_sha[:7]
-              suffix = f"pr{pr_number}-{today}-{short_sha}"
-              extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
-          elif event_name in {"schedule", "workflow_dispatch", "push"}:
-              ami_type = {
-                  "schedule": "scheduled",
-                  "workflow_dispatch": "manual",
-                  "push": "push",
-              }[event_name]
-          else:
-              raise SystemExit(f"Unsupported event type for AMI metadata: {event_name}")
-
-          tags = {
-              "omsf-ami-type": ami_type,
-              "commit": short_sha,
-              "delete-after": delete_after_date.strftime("%Y-%m-%d"),
-          }
-          tags.update(extra_tags)
-          tags_json = json.dumps(tags)
-
-          output_path = Path(os.environ["GITHUB_OUTPUT"])
-          with output_path.open("a", encoding="utf-8") as github_output:
-              github_output.write(f"ami_name_suffix={suffix}\n")
-              github_output.write(f"additional_tags={tags_json}\n")
+          aws-region: ${{ needs.lock-environments.outputs.aws_region }}
 
       - name: Recommend AMI state
         id: recommend
@@ -193,12 +182,12 @@ jobs:
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
         with:
-          packer_version: latest
+          version: latest
 
       - name: Build AMI
         env:
-          AMI_NAME_SUFFIX: ${{ steps.metadata.outputs.ami_name_suffix }}
-          ADDITIONAL_TAGS: ${{ steps.metadata.outputs.additional_tags }}
+          AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
+          ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
         run: |
           set -euo pipefail
           packer init build-ami.pkr.hcl
@@ -240,60 +229,10 @@ jobs:
           name: pixi-lock
           path: environments
 
-      - name: Set build metadata
-        id: metadata
-        shell: python
-        run: |
-          import datetime
-          import json
-          import os
-          from pathlib import Path
-
-          event_name = os.environ["GITHUB_EVENT_NAME"]
-          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
-              event = json.load(fp)
-
-          now = datetime.datetime.utcnow()
-          today = now.strftime("%Y%m%d")
-          full_sha = os.environ["GITHUB_SHA"]
-          short_sha = full_sha[:7]
-          suffix = f"{today}-{short_sha}"
-          extra_tags = {}
-          delete_after_date = now + datetime.timedelta(days=7)
-
-          if event_name == "pull_request":
-              ami_type = "pr"
-              pr_number = event.get("number")
-              head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
-              short_sha = head_sha[:7]
-              suffix = f"pr{pr_number}-{today}-{short_sha}"
-              extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
-          elif event_name in {"schedule", "workflow_dispatch", "push"}:
-              ami_type = {
-                  "schedule": "scheduled",
-                  "workflow_dispatch": "manual",
-                  "push": "push",
-              }[event_name]
-          else:
-              raise SystemExit(f"Unsupported event type for Docker metadata: {event_name}")
-
-          tags = {
-              "omsf-ami-type": ami_type,
-              "commit": short_sha,
-              "delete-after": delete_after_date.strftime("%Y-%m-%d"),
-          }
-          tags.update(extra_tags)
-          tags_json = json.dumps(tags)
-
-          output_path = Path(os.environ["GITHUB_OUTPUT"])
-          with output_path.open("a", encoding="utf-8") as github_output:
-              github_output.write(f"ami_name_suffix={suffix}\n")
-              github_output.write(f"additional_tags={tags_json}\n")
-
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
         with:
-          packer_version: latest
+          version: latest
 
       - name: Log in to GHCR
         run: |
@@ -301,9 +240,9 @@ jobs:
 
       - name: Build Docker image
         env:
-          AMI_NAME_SUFFIX: ${{ steps.metadata.outputs.ami_name_suffix }}
-          ADDITIONAL_TAGS: ${{ steps.metadata.outputs.additional_tags }}
-          DOCKER_REPO: ${{ env.DOCKER_REPOSITORY }}
+          AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
+          ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
+          DOCKER_REPO: ${{ needs.lock-environments.outputs.docker_repository }}
         run: |
           set -euo pipefail
           packer init build-docker.pkr.hcl
@@ -318,7 +257,7 @@ jobs:
       - name: Push Docker image
         run: |
           set -euo pipefail
-          docker push --all-tags "${DOCKER_REPOSITORY}"
+          docker push --all-tags "${{ needs.lock-environments.outputs.docker_repository }}"
 
       - name: Collect packer manifest outputs
         id: collect
@@ -326,7 +265,7 @@ jobs:
         with:
           manifest_path: packer-docker-manifest.json
           kind: docker
-          image_repo: ${{ env.DOCKER_REPOSITORY }}
+          image_repo: ${{ needs.lock-environments.outputs.docker_repository }}
 
   # ── Step 3a: Test AMI environments ─────────────────────────────────
   test-ami:

@@ -2,6 +2,7 @@
 .terraform/
 
 packer-manifest.json
+packer-docker-manifest.json
 
 # .tfstate files
 *.tfstate

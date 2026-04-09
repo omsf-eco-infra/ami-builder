@@ -109,11 +109,9 @@ export PIXI_DEFAULT_ENVIRONMENT="${default_env_name}"
 export PIXI_HOME="${pixi_home}"
 EOF
 maybe_sudo chmod 644 "${profile_script}"
-maybe_sudo rm -f /etc/profile.d/micromamba.sh
 
 target_profile="${target_home}/.profile"
 run_as_target_user touch "${target_profile}"
-run_as_target_user sed -i '/# >>> micromamba auto-activation >>>/,/# <<< micromamba auto-activation <<</d' "${target_profile}"
 run_as_target_user sed -i '/# >>> omsf pixi auto-activation >>>/,/# <<< omsf pixi auto-activation <<</d' "${target_profile}"
 run_as_target_user tee -a "${target_profile}" >/dev/null <<'EOF'
 
