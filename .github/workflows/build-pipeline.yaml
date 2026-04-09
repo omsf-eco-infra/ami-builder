@@ -20,7 +20,6 @@ env:
   DOCKER_REPOSITORY: ghcr.io/omsf-eco-infra/omsf
   AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
   AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
-  AWS_GHA_TEST_RUNNER_INSTANCE_TYPE: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE || 'g5.xlarge' }}
   AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
 
 jobs:
@@ -293,7 +292,7 @@ jobs:
   # ── Step 3b: Start self-hosted GPU runner for Docker tests ─────────
   start-docker-test-runner:
     name: Start Docker test runner
-    needs: build-docker
+    needs: [lock-environments, build-docker]
     if: ${{ needs.build-docker.outputs.image_repo != '' }}
     runs-on: ubuntu-latest
     permissions:
@@ -314,7 +313,9 @@ jobs:
         run: |
           set -euo pipefail
           : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
-          : "${AWS_GHA_TEST_RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
+          : "${RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
+        env:
+          RUNNER_INSTANCE_TYPE: ${{ needs.lock-environments.outputs.default_instance_type }}
 
       - name: Start runner
         id: aws-start
@@ -322,7 +323,7 @@ jobs:
         with:
           aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
           aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
-          aws_instance_type: ${{ env.AWS_GHA_TEST_RUNNER_INSTANCE_TYPE }}
+          aws_instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
           aws_region_name: ${{ env.AWS_REGION }}
           aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
         env:

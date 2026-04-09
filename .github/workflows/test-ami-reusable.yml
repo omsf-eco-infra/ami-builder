@@ -124,6 +124,7 @@ jobs:
           set -euo pipefail
 
           subnet="${SUBNET_INPUT:-}"
+          name_tag_source="${AMI_NAME:-$AMI_ID}"
 
           args=(
             --ami "${AMI_ID}"
@@ -131,6 +132,7 @@ jobs:
             --security-group "${SECURITY_GROUP_ID}"
             --iam-profile "${INSTANCE_PROFILE_NAME}"
             --wait-timeout "${WAIT_TIMEOUT}"
+            --tag "Name=${name_tag_source}-${ENVIRONMENT_NAME}-test"
             --tag "Purpose=${WORKFLOW_PURPOSE}"
             --tag "Workflow=${WORKFLOW_NAME}"
             --tag "Run=${RUN_ID}"
