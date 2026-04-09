@@ -280,12 +280,13 @@ build {
   }
 
   # ── Cleanup ────────────────────────────────────────────────────────
+  # Keep /tmp/environments (test scripts are needed at container runtime).
+  # The pixi.toml/pixi.lock duplication with /root is trivial.
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "set -euxo pipefail",
       "/usr/local/bin/pixi clean cache -y --no-progress || true",
-      "rm -rf /tmp/environments",
       "rm -rf /var/lib/apt/lists/*",
     ]
   }

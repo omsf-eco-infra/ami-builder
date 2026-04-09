@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       environment_name:
-        description: Micromamba environment name to validate.
+        description: Logical runtime environment name to validate.
         required: true
         type: string
       full_test_script:
@@ -74,7 +74,7 @@ on:
         description: The AMI ID that was tested.
         value: ${{ inputs.ami_id }}
       environment_name:
-        description: The micromamba environment that was validated.
+        description: The logical runtime environment that was validated.
         value: ${{ inputs.environment_name }}
       instance_id:
         description: The EC2 instance launched for testing (if any).
@@ -188,6 +188,7 @@ jobs:
         env:
           INSTANCE_ID: ${{ needs.start_instance.outputs.instance_id }}
           ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          TEST_ENVIRONMENT_NAME: ${{ format('{0}-test', inputs.environment_name) }}
           AMI_ID: ${{ inputs.ami_id }}
           AMI_NAME: ${{ inputs.ami_name }}
           LOG_GROUP_NAME: ${{ secrets.test_log_group_name }}
@@ -249,7 +250,7 @@ jobs:
             --instance "${INSTANCE_ID}" \
             --script "${script_path}" \
             --log-group "${LOG_GROUP_NAME}" \
-            --env-cmd "source /etc/profile.d/micromamba.sh && micromamba activate ${ENVIRONMENT_NAME}" \
+            --env-cmd "export PIXI_HOME=/home/ubuntu/.pixi-global; eval \"\$(/usr/local/bin/pixi shell-hook -m /home/ubuntu -e ${TEST_ENVIRONMENT_NAME} --shell bash --frozen)\"" \
             --timeout "${timeout_value}" \
             --poll-interval "${poll_interval}" \
             --comment "${comment}"

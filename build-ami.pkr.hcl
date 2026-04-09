@@ -49,7 +49,7 @@ variable "additional_tags" {
 locals {
   ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
-  ami_base_with_suffix = "${local.ami_base_name}-${local.ami_name_suffix}"
+  ami_base_with_suffix = local.ami_name_suffix == "" ? local.ami_base_name : "${local.ami_base_name}-${local.ami_name_suffix}"
   ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
 
   environment_smoke_scripts = {
