@@ -52,11 +52,21 @@ variable "additional_tags" {
   default     = "{}"
 }
 
+variable "build_timestamp" {
+  description = "Build timestamp shared with workflow metadata so image tags and manifest output stay in sync."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.build_timestamp)) > 0 && can(regex("^[0-9]+$", trimspace(var.build_timestamp)))
+    error_message = "The build_timestamp must be a non-empty integer timestamp string."
+  }
+}
+
 locals {
   ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
   ami_base_with_suffix = local.ami_name_suffix == "" ? local.ami_base_name : "${local.ami_base_name}-${local.ami_name_suffix}"
-  ami_name             = "${local.ami_base_with_suffix}-{{timestamp}}"
+  ami_name             = "${local.ami_base_with_suffix}-${var.build_timestamp}"
 
   environment_smoke_scripts = {
     for path in fileset(path.root, "environments/*/smoke-tests.sh") :
@@ -135,7 +145,7 @@ locals {
 
   merged_labels = merge(local.base_labels, local.build_metadata, jsondecode(var.additional_tags))
 
-  primary_tag = "${local.ami_base_with_suffix}-{{timestamp}}"
+  primary_tag = "${local.ami_base_with_suffix}-${var.build_timestamp}"
   tag_list    = [local.primary_tag]
 
   label_changes = [for key, value in local.merged_labels : "LABEL ${key}=${jsonencode(value)}"]

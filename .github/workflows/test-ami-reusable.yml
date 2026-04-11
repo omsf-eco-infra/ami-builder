@@ -49,7 +49,7 @@ on:
         description: Default SSM command timeout (seconds) applied when per-test overrides are not provided.
         required: false
         type: number
-        default: 3600
+        default: 21000
       ssm_poll_interval:
         description: Seconds between SSM status polls.
         required: false
@@ -171,6 +171,7 @@ jobs:
     needs: start_instance
     if: ${{ needs.start_instance.outputs.instance_id != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     env:
       AWS_REGION: ${{ inputs.region }}

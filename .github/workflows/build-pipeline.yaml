@@ -31,6 +31,7 @@ jobs:
       environment_names: ${{ steps.context.outputs.environment_names }}
       build_kind: ${{ steps.context.outputs.build_kind }}
       ami_name_suffix: ${{ steps.context.outputs.ami_name_suffix }}
+      build_timestamp: ${{ steps.context.outputs.build_timestamp }}
       additional_tags: ${{ steps.context.outputs.additional_tags }}
       aws_region: ${{ steps.context.outputs.aws_region }}
       default_instance_type: ${{ steps.context.outputs.default_instance_type }}
@@ -85,6 +86,7 @@ jobs:
 
           now = datetime.datetime.now(datetime.UTC)
           today = now.strftime("%Y%m%d")
+          build_timestamp = str(int(now.timestamp()))
           full_sha = os.environ["GITHUB_SHA"]
           short_sha = full_sha[:7]
           suffix = f"{today}-{short_sha}"
@@ -117,12 +119,14 @@ jobs:
           print(f"Discovered environments: {env_names}")
           print(f"Build kind: {build_kind}")
           print(f"Image suffix: {suffix}")
+          print(f"Build timestamp: {build_timestamp}")
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as fh:
               fh.write(f"environment_names={json.dumps(env_names)}\n")
               fh.write(f"build_kind={build_kind}\n")
               fh.write(f"ami_name_suffix={suffix}\n")
+              fh.write(f"build_timestamp={build_timestamp}\n")
               fh.write(f"additional_tags={json.dumps(tags)}\n")
               fh.write(f"aws_region={os.environ['AWS_REGION']}\n")
               fh.write(f"default_instance_type={os.environ['DEFAULT_INSTANCE_TYPE']}\n")
@@ -240,6 +244,7 @@ jobs:
       - name: Build Docker image
         env:
           AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
+          BUILD_TIMESTAMP: ${{ needs.lock-environments.outputs.build_timestamp }}
           ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
           DOCKER_REPO: ${{ needs.lock-environments.outputs.docker_repository }}
         run: |
@@ -248,6 +253,7 @@ jobs:
           packer build \
             -var-file "${PROJECT}.pkrvars.hcl" \
             -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
+            -var "build_timestamp=${BUILD_TIMESTAMP}" \
             -var "additional_tags=${ADDITIONAL_TAGS}" \
             -var "docker_repository=${DOCKER_REPO}" \
             build-docker.pkr.hcl | tee packer-output.log
@@ -281,6 +287,7 @@ jobs:
       ami_name: ${{ needs.build-ami.outputs.ami_name }}
       environment_name: ${{ matrix.environment.name }}
       full_test_script: ${{ matrix.environment.full_script }}
+      full_test_timeout: 21000
       instance_type: ${{ needs.build-ami.outputs.default_instance_type }}
       region: ${{ needs.build-ami.outputs.aws_region }}
     secrets:
