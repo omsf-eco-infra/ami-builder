@@ -409,12 +409,13 @@ jobs:
     name: Promote artifacts
     # AMI testing is currently disabled above; add `test-ami` back here when that
     # job is re-enabled.
+    # Restore `needs.test-ami.result == 'success'` in the `if` expression below
+    # when `test-ami` is re-enabled.
     needs: [build-ami, build-docker, test-docker]
     if: >-
       ${{ always() &&
           github.event_name != 'pull_request' &&
           needs.build-ami.outputs.ami_id != '' &&
-          # Restore `needs.test-ami.result == 'success'` when `test-ami` is back.
           needs.build-docker.outputs.image_repo != '' &&
           needs.test-docker.result == 'success' }}
     runs-on: ubuntu-latest
