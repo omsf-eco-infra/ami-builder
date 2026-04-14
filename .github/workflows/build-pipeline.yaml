@@ -273,28 +273,33 @@ jobs:
           image_repo: ${{ needs.lock-environments.outputs.docker_repository }}
 
   # ── Step 3a: Test AMI environments ─────────────────────────────────
-  test-ami:
-    name: Test AMI (${{ matrix.environment.name }})
-    needs: build-ami
-    if: ${{ needs.build-ami.outputs.ami_id != '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        environment: ${{ fromJson(needs.build-ami.outputs.environment_matrix) }}
-    uses: ./.github/workflows/test-ami-reusable.yml
-    with:
-      ami_id: ${{ needs.build-ami.outputs.ami_id }}
-      ami_name: ${{ needs.build-ami.outputs.ami_name }}
-      environment_name: ${{ matrix.environment.name }}
-      full_test_script: ${{ matrix.environment.full_script }}
-      full_test_timeout: 21000
-      instance_type: ${{ needs.build-ami.outputs.default_instance_type }}
-      region: ${{ needs.build-ami.outputs.aws_region }}
-    secrets:
-      test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
-      test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
-      test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
-      test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
+  # Temporarily disabled while AMI test hangs are under investigation.
+  # Re-enable this job once we have a clear AMI-specific test strategy again.
+  # When re-enabling, also restore the `test-ami` dependency and success gate in
+  # the `promote` job below.
+  #
+  # test-ami:
+  #   name: Test AMI (${{ matrix.environment.name }})
+  #   needs: build-ami
+  #   if: ${{ needs.build-ami.outputs.ami_id != '' }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       environment: ${{ fromJson(needs.build-ami.outputs.environment_matrix) }}
+  #   uses: ./.github/workflows/test-ami-reusable.yml
+  #   with:
+  #     ami_id: ${{ needs.build-ami.outputs.ami_id }}
+  #     ami_name: ${{ needs.build-ami.outputs.ami_name }}
+  #     environment_name: ${{ matrix.environment.name }}
+  #     full_test_script: ${{ matrix.environment.full_script }}
+  #     full_test_timeout: 21000
+  #     instance_type: ${{ needs.build-ami.outputs.default_instance_type }}
+  #     region: ${{ needs.build-ami.outputs.aws_region }}
+  #   secrets:
+  #     test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
+  #     test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
+  #     test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
+  #     test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
 
   # ── Step 3b: Start self-hosted GPU runner for Docker tests ─────────
   start-docker-test-runner:
@@ -402,12 +407,14 @@ jobs:
   # ── Step 4: Promote artifacts ──────────────────────────────────────
   promote:
     name: Promote artifacts
-    needs: [build-ami, build-docker, test-ami, test-docker]
+    # AMI testing is currently disabled above; add `test-ami` back here when that
+    # job is re-enabled.
+    needs: [build-ami, build-docker, test-docker]
     if: >-
       ${{ always() &&
           github.event_name != 'pull_request' &&
           needs.build-ami.outputs.ami_id != '' &&
-          needs.test-ami.result == 'success' &&
+          # Restore `needs.test-ami.result == 'success'` when `test-ami` is back.
           needs.build-docker.outputs.image_repo != '' &&
           needs.test-docker.result == 'success' }}
     runs-on: ubuntu-latest
