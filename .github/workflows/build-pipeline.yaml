@@ -308,6 +308,10 @@ jobs:
     name: Test Docker (${{ matrix.environment.name }})
     needs: [lock-environments, build-docker]
     if: ${{ needs.build-docker.outputs.image_repo != '' }}
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
