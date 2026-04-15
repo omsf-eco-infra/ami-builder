@@ -29,6 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       environment_names: ${{ steps.context.outputs.environment_names }}
+      selected_environment_names: ${{ steps.context.outputs.selected_environment_names }}
+      environment_matrix: ${{ steps.context.outputs.environment_matrix }}
+      packer_environments: ${{ steps.context.outputs.packer_environments }}
+      image_name: ${{ steps.context.outputs.image_name }}
+      default_environment: ${{ steps.context.outputs.default_environment }}
       build_kind: ${{ steps.context.outputs.build_kind }}
       ami_name_suffix: ${{ steps.context.outputs.ami_name_suffix }}
       build_timestamp: ${{ steps.context.outputs.build_timestamp }}
@@ -70,26 +75,28 @@ jobs:
         shell: python
         run: |
           import datetime
+          import importlib.util
           import json
           import os
-          import tomllib
+          import sys
           from pathlib import Path
 
+          helper_path = Path("environments/pixi-environment-metadata.py")
           toml_path = Path("environments/pixi.toml")
-          with toml_path.open("rb") as fp:
-              manifest = tomllib.load(fp)
+          spec = importlib.util.spec_from_file_location("pixi_environment_metadata", helper_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit(f"Failed to load metadata helper from {helper_path}")
+          metadata_helper = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = metadata_helper
+          spec.loader.exec_module(metadata_helper)
 
-          raw_environments = manifest.get("environments", {})
-          if not isinstance(raw_environments, dict):
-              raise SystemExit("Manifest environments table is missing or malformed.")
-
-          env_names = sorted(
-              name for name in raw_environments
-              if isinstance(name, str)
-          )
-
+          metadata = metadata_helper.load_metadata(toml_path)
+          env_names = metadata["selected_environments"]
           if not env_names:
               raise SystemExit("No environments found in pixi.toml")
+
+          packer_environments = json.dumps(env_names, separators=(",", ":"))
+          environment_matrix = json.dumps(metadata["environment_matrix"], separators=(",", ":"))
 
           event_name = os.environ["GITHUB_EVENT_NAME"]
           with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
@@ -127,14 +134,21 @@ jobs:
           }
           tags.update(extra_tags)
 
-          print(f"Discovered environments: {env_names}")
+          print(f"Image name: {metadata['image_name']}")
+          print(f"Default environment: {metadata['default_environment']}")
+          print(f"Selected environments: {env_names}")
           print(f"Build kind: {build_kind}")
           print(f"Image suffix: {suffix}")
           print(f"Build timestamp: {build_timestamp}")
 
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as fh:
-              fh.write(f"environment_names={json.dumps(env_names)}\n")
+              fh.write(f"environment_names={packer_environments}\n")
+              fh.write(f"selected_environment_names={packer_environments}\n")
+              fh.write(f"environment_matrix={environment_matrix}\n")
+              fh.write(f"packer_environments={packer_environments}\n")
+              fh.write(f"image_name={metadata['image_name']}\n")
+              fh.write(f"default_environment={metadata['default_environment']}\n")
               fh.write(f"build_kind={build_kind}\n")
               fh.write(f"ami_name_suffix={suffix}\n")
               fh.write(f"build_timestamp={build_timestamp}\n")
@@ -145,19 +159,12 @@ jobs:
 
   # ── Step 2a: Build AMI ─────────────────────────────────────────────
   build-ami:
-    name: Build AMI (${{ matrix.project }})
+    name: Build AMI
     needs: lock-environments
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [openfe]
     runs-on: ubuntu-latest
-    env:
-      PROJECT: ${{ matrix.project }}
     outputs:
       ami_id: ${{ steps.collect.outputs.ami_id }}
       ami_name: ${{ steps.collect.outputs.ami_name }}
-      environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
       aws_region: ${{ needs.lock-environments.outputs.aws_region }}
       default_instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
     steps:
@@ -183,13 +190,18 @@ jobs:
 
       - name: Build AMI
         env:
+          IMAGE_NAME: ${{ needs.lock-environments.outputs.image_name }}
+          DEFAULT_ENVIRONMENT: ${{ needs.lock-environments.outputs.default_environment }}
+          PACKER_ENVIRONMENTS: ${{ needs.lock-environments.outputs.packer_environments }}
           AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
           ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
         run: |
           set -euo pipefail
           packer init build-ami.pkr.hcl
           packer build \
-            -var-file "${PROJECT}.pkrvars.hcl" \
+            -var "ami_name=${IMAGE_NAME}" \
+            -var "default_environment=${DEFAULT_ENVIRONMENT}" \
+            -var "environments=${PACKER_ENVIRONMENTS}" \
             -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
             -var "additional_tags=${ADDITIONAL_TAGS}" \
             build-ami.pkr.hcl
@@ -204,19 +216,12 @@ jobs:
 
   # ── Step 2b: Build Docker image ────────────────────────────────────
   build-docker:
-    name: Build Docker Image (${{ matrix.project }})
+    name: Build Docker Image
     needs: lock-environments
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [openfe]
     runs-on: ubuntu-latest
-    env:
-      PROJECT: ${{ matrix.project }}
     outputs:
       image_repo: ${{ steps.collect.outputs.image_repo }}
       image_tag: ${{ steps.collect.outputs.image_tag }}
-      environment_matrix: ${{ steps.collect.outputs.environment_matrix }}
     steps:
       - uses: actions/checkout@v6
 
@@ -237,6 +242,9 @@ jobs:
 
       - name: Build Docker image
         env:
+          IMAGE_NAME: ${{ needs.lock-environments.outputs.image_name }}
+          DEFAULT_ENVIRONMENT: ${{ needs.lock-environments.outputs.default_environment }}
+          PACKER_ENVIRONMENTS: ${{ needs.lock-environments.outputs.packer_environments }}
           AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
           BUILD_TIMESTAMP: ${{ needs.lock-environments.outputs.build_timestamp }}
           ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
@@ -245,7 +253,9 @@ jobs:
           set -euo pipefail
           packer init build-docker.pkr.hcl
           packer build \
-            -var-file "${PROJECT}.pkrvars.hcl" \
+            -var "ami_name=${IMAGE_NAME}" \
+            -var "default_environment=${DEFAULT_ENVIRONMENT}" \
+            -var "environments=${PACKER_ENVIRONMENTS}" \
             -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
             -var "build_timestamp=${BUILD_TIMESTAMP}" \
             -var "additional_tags=${ADDITIONAL_TAGS}" \
@@ -274,12 +284,12 @@ jobs:
   #
   # test-ami:
   #   name: Test AMI (${{ matrix.environment.name }})
-  #   needs: build-ami
+  #   needs: [lock-environments, build-ami]
   #   if: ${{ needs.build-ami.outputs.ami_id != '' }}
   #   strategy:
   #     fail-fast: false
   #     matrix:
-  #       environment: ${{ fromJson(needs.build-ami.outputs.environment_matrix) }}
+  #       environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
   #   uses: ./.github/workflows/test-ami-reusable.yml
   #   with:
   #     ami_id: ${{ needs.build-ami.outputs.ami_id }}
@@ -338,12 +348,12 @@ jobs:
   # ── Step 3b: Test Docker environments ──────────────────────────────
   test-docker:
     name: Test Docker (${{ matrix.environment.name }})
-    needs: [build-docker, start-docker-test-runner]
+    needs: [lock-environments, build-docker, start-docker-test-runner]
     if: ${{ needs.build-docker.outputs.image_repo != '' }}
     strategy:
       fail-fast: false
       matrix:
-        environment: ${{ fromJson(needs.build-docker.outputs.environment_matrix) }}
+        environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
     runs-on: ${{ fromJson(needs.start-docker-test-runner.outputs.instances) }}
     steps:
       - name: Ensure runner dependencies (Ubuntu)

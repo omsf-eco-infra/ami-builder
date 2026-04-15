@@ -34,6 +34,16 @@ variable "environments" {
   }
 }
 
+variable "default_environment" {
+  description = "Runtime environment to auto-activate by default."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.default_environment)) > 0 && can(regex("^[A-Za-z0-9_.-]+$", trimspace(var.default_environment)))
+    error_message = "The default_environment must be a non-empty name using only letters, numbers, dot, underscore, or hyphen."
+  }
+}
+
 variable "ami_name_suffix" {
   description = "Optional suffix appended to the AMI base name; hyphen is added automatically if needed."
   type        = string
@@ -73,31 +83,21 @@ locals {
   available_environment_names  = sort(keys(local.available_environment_paths))
   requested_environment_names  = length(var.environments) > 0 ? var.environments : local.available_environment_names
   normalized_environment_names = [for env in local.requested_environment_names : trimspace(env) if trimspace(env) != ""]
-  enabled_environment_names    = sort(distinct(local.normalized_environment_names))
+  enabled_environment_names    = distinct(local.normalized_environment_names)
   missing_environment_names    = [for env in local.enabled_environment_names : env if !contains(local.available_environment_names, env)]
   staged_environment_names     = [for env in local.enabled_environment_names : env if !contains(local.missing_environment_names, env)]
 
-  environment_matrix = [
-    for env in local.enabled_environment_names : {
-      name         = env
-      smoke_script = trimspace(lookup(local.environment_smoke_scripts, env, ""))
-      full_script  = trimspace(lookup(local.environment_full_scripts, env, ""))
-    }
-  ]
-
-  environment_matrix_json = jsonencode(local.environment_matrix)
-
   missing_smoke_scripts = [
-    for item in local.environment_matrix : item.name
-    if length(item.smoke_script) == 0
+    for env in local.enabled_environment_names : env
+    if length(trimspace(lookup(local.environment_smoke_scripts, env, ""))) == 0
   ]
 
   missing_full_scripts = [
-    for item in local.environment_matrix : item.name
-    if length(item.full_script) == 0
+    for env in local.enabled_environment_names : env
+    if length(trimspace(lookup(local.environment_full_scripts, env, ""))) == 0
   ]
 
-  default_environment = length(local.enabled_environment_names) > 0 ? local.enabled_environment_names[0] : ""
+  default_environment = trimspace(var.default_environment)
 
   environments_label = length(local.enabled_environment_names) > 0 ? join(", ", local.enabled_environment_names) : "none"
 
@@ -107,7 +107,6 @@ locals {
     ami_name             = local.ami_name
     default_environment  = local.default_environment
     environments_label   = local.environments_label
-    environment_matrix   = local.environment_matrix_json
   }
 
   remote_environment_root = "/tmp/environments"

@@ -7,6 +7,7 @@ import json
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -32,13 +33,75 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _require_table(value: object, label: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} table is missing or malformed.")
+    return value
+
+
+def _require_string(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-empty string.")
+    return value.strip()
+
+
+def _require_string_list(value: object, label: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a non-empty list of strings.")
+
+    strings = []
+    seen = set()
+    duplicates = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{label} must contain only non-empty strings.")
+        name = item.strip()
+        if name in seen:
+            duplicates.append(name)
+        seen.add(name)
+        strings.append(name)
+
+    if duplicates:
+        raise ValueError(f"{label} contains duplicate entries: {', '.join(duplicates)}")
+
+    return strings
+
+
+def _build_environment_matrix(
+    selected_environments: list[str],
+    environment_root: Path,
+) -> list[dict[str, str]]:
+    matrix = []
+    for env_name in selected_environments:
+        env_dir = environment_root / env_name
+        smoke_script = env_dir / "smoke-tests.sh"
+        full_script = env_dir / "full-tests.sh"
+        if not smoke_script.is_file():
+            raise ValueError(
+                f"Selected environment '{env_name}' is missing smoke-tests.sh at {smoke_script}."
+            )
+        if not full_script.is_file():
+            raise ValueError(
+                f"Selected environment '{env_name}' is missing full-tests.sh at {full_script}."
+            )
+        matrix.append(
+            {
+                "name": env_name,
+                "smoke_script": str(smoke_script),
+                "full_script": str(full_script),
+            }
+        )
+    return matrix
+
+
 def load_metadata(manifest_path: Path) -> dict[str, object]:
     with manifest_path.open("rb") as fh:
         manifest = tomllib.load(fh)
 
-    raw_environments = manifest.get("environments", {})
-    if not isinstance(raw_environments, dict):
-        raise ValueError("Manifest environments table is missing or malformed.")
+    raw_environments = _require_table(
+        manifest.get("environments", {}),
+        "Manifest environments",
+    )
 
     all_environments = sorted(
         name
@@ -57,12 +120,55 @@ def load_metadata(manifest_path: Path) -> dict[str, object]:
         if f"{name}-test" not in raw_environments
     )
 
+    tool_table = _require_table(manifest.get("tool"), "Manifest tool")
+    image_builder = _require_table(
+        tool_table.get("image-builder"),
+        "Manifest tool.image-builder",
+    )
+    image_name = _require_string(image_builder.get("image_name"), "image_name")
+    default_environment = _require_string(
+        image_builder.get("default_environment"),
+        "default_environment",
+    )
+    selected_environments = _require_string_list(
+        image_builder.get("environments"),
+        "environments",
+    )
+
+    for env_name in selected_environments:
+        if env_name.endswith("-test"):
+            raise ValueError(
+                f"Selected environment '{env_name}' must be a runtime environment, not a test environment."
+            )
+        if env_name not in raw_environments:
+            raise ValueError(
+                f"Selected environment '{env_name}' is missing from the Pixi workspace manifest."
+            )
+        if f"{env_name}-test" not in raw_environments:
+            raise ValueError(
+                f"Selected environment '{env_name}' is missing paired test environment '{env_name}-test'."
+            )
+
+    if default_environment not in selected_environments:
+        raise ValueError(
+            f"default_environment '{default_environment}' must be included in environments."
+        )
+
+    environment_matrix = _build_environment_matrix(
+        selected_environments,
+        manifest_path.parent,
+    )
+
     return {
         "manifest_path": str(manifest_path),
         "all_environments": all_environments,
         "runtime_environments": runtime_environments,
         "test_environments": test_environments,
         "missing_test_pairs": missing_test_pairs,
+        "image_name": image_name,
+        "default_environment": default_environment,
+        "selected_environments": selected_environments,
+        "environment_matrix": environment_matrix,
     }
 
 
@@ -81,6 +187,19 @@ def emit_shell(metadata: dict[str, object]) -> str:
         else:
             rendered = str(value)
         shell_key = f"PIXI_{key.upper()}"
+        lines.append(f"{shell_key}={shlex.quote(rendered)}")
+
+    image_builder_fields: tuple[tuple[str, Any], ...] = (
+        ("IMAGE_BUILDER_IMAGE_NAME", metadata["image_name"]),
+        ("IMAGE_BUILDER_DEFAULT_ENVIRONMENT", metadata["default_environment"]),
+        ("IMAGE_BUILDER_ENVIRONMENTS", metadata["selected_environments"]),
+        ("IMAGE_BUILDER_ENVIRONMENT_MATRIX", metadata["environment_matrix"]),
+    )
+    for shell_key, value in image_builder_fields:
+        if isinstance(value, (list, dict)):
+            rendered = json.dumps(value, separators=(",", ":"))
+        else:
+            rendered = str(value)
         lines.append(f"{shell_key}={shlex.quote(rendered)}")
     return "\n".join(lines)
 

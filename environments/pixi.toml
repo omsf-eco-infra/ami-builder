@@ -6,6 +6,11 @@ name = "omsf-image-environments"
 platforms = ["linux-64"]
 version = "0.1.0"
 
+[tool.image-builder]
+image_name = "omsf"
+default_environment = "openfe"
+environments = ["openfe"]#, "openpathsampling"]
+
 [system-requirements]
 cuda = "12"
 

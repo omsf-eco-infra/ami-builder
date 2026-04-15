@@ -14,9 +14,6 @@ inputs:
     default: ""
 
 outputs:
-  environment_matrix:
-    description: JSON environment matrix emitted by the Packer template.
-    value: ${{ steps.collect.outputs.environment_matrix }}
   ami_id:
     description: AMI ID (without artifact prefix), for ami manifests.
     value: ${{ steps.collect.outputs.ami_id }}
@@ -70,21 +67,11 @@ runs:
         if not isinstance(custom_data, dict):
           fail("Manifest custom_data is missing or invalid.")
 
-        matrix_json = custom_data.get("environment_matrix", "")
-        if not isinstance(matrix_json, str) or not matrix_json or matrix_json == "null":
-          fail("Environment matrix missing from manifest")
-        try:
-          json.loads(matrix_json)
-        except json.JSONDecodeError:
-          fail("Environment matrix is not valid JSON")
-
         output_path = os.environ.get("GITHUB_OUTPUT")
         if not output_path:
           fail("GITHUB_OUTPUT is not set")
 
         with open(output_path, "a", encoding="utf-8") as output:
-          output.write(f"environment_matrix={matrix_json}\n")
-
           if kind == "ami":
             artifact_id = build.get("artifact_id", "")
             if not artifact_id:
