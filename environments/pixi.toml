@@ -9,7 +9,7 @@ version = "0.1.0"
 [tool.image-builder]
 image_name = "omsf"
 default_environment = "omsf"
-environments = ["omsf", "openfe"] #, "openpathsampling"]
+environments = ["omsf", "openfe"]
 
 [system-requirements]
 cuda = "12"
@@ -31,34 +31,15 @@ features = ["openfe", "openfe-test"]
 solve-group = "openfe"
 no-default-feature = true
 
-# OpenPathSampling
-[feature.openpathsampling.dependencies]
-openpathsampling = "*"
-openpathsampling-cli = "*"
-
-[feature.openpathsampling-test.dependencies]
-pytest = "*"
-
-[environments.openpathsampling]
-features = ["openpathsampling"]
-solve-group = "openpathsampling"
-no-default-feature = true
-
-[environments.openpathsampling-test]
-features = ["openpathsampling", "openpathsampling-test"]
-solve-group = "openpathsampling"
-no-default-feature = true
-
 # OMSF
 [environments.omsf]
-features = ["openfe", "openpathsampling"]
+features = ["openfe"]
 solve-group = "omsf"
 no-default-feature = true
 
 [environments.omsf-test]
 features = [
   "openfe", "openfe-test",
-  "openpathsampling", "openpathsampling-test"
 ]
 solve-group = "omsf"
 no-default-feature = true

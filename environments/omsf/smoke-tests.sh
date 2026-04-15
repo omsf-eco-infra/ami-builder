@@ -5,4 +5,3 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENVIRONMENT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 bash "${ENVIRONMENT_ROOT}/openfe/smoke-tests.sh"
-#bash "${ENVIRONMENT_ROOT}/openpathsampling/smoke-tests.sh"
