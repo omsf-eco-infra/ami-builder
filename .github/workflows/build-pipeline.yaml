@@ -18,9 +18,6 @@ env:
   AWS_REGION: us-east-1
   DEFAULT_INSTANCE_TYPE: g5.xlarge
   DOCKER_REPOSITORY: ghcr.io/omsf-eco-infra/omsf
-  AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
-  AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
-  AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
 
 jobs:
   # ── Step 1: Prepare shared build inputs ────────────────────────────
@@ -277,10 +274,11 @@ jobs:
           image_repo: ${{ needs.lock-environments.outputs.docker_repository }}
 
   # ── Step 3a: Test AMI environments ─────────────────────────────────
-  # Temporarily disabled while AMI test hangs are under investigation.
-  # Re-enable this job once we have a clear AMI-specific test strategy again.
-  # When re-enabling, also restore the `test-ami` dependency and success gate in
-  # the `promote` job below.
+  # Intentionally dormant while AMI test hangs are under investigation.
+  # The pipeline still computes `environment_matrix`, and the reusable workflow
+  # below can fan out one isolated EC2 test instance per environment when AMI
+  # testing is re-enabled. When restoring this job, also decide whether AMI test
+  # success should gate the `promote` job below.
   #
   # test-ami:
   #   name: Test AMI (${{ matrix.environment.name }})
@@ -305,116 +303,32 @@ jobs:
   #     test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
   #     test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
 
-  # ── Step 3b: Start self-hosted GPU runner for Docker tests ─────────
-  start-docker-test-runner:
-    name: Start Docker test runner
-    needs: [lock-environments, build-docker]
-    if: ${{ needs.build-docker.outputs.image_repo != '' }}
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    outputs:
-      mapping: ${{ steps.aws-start.outputs.mapping }}
-      instances: ${{ steps.aws-start.outputs.instances }}
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
-          role-session-name: gha-start-docker-test-runner
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Validate runner configuration
-        run: |
-          set -euo pipefail
-          : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
-          : "${RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
-        env:
-          RUNNER_INSTANCE_TYPE: ${{ needs.lock-environments.outputs.default_instance_type }}
-
-      - name: Start runner
-        id: aws-start
-        uses: omsf/start-aws-gha-runner@v1.0.0
-        with:
-          aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
-          aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
-          aws_instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
-          aws_region_name: ${{ env.AWS_REGION }}
-          aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
-
   # ── Step 3b: Test Docker environments ──────────────────────────────
   test-docker:
     name: Test Docker (${{ matrix.environment.name }})
-    needs: [lock-environments, build-docker, start-docker-test-runner]
+    needs: [lock-environments, build-docker]
     if: ${{ needs.build-docker.outputs.image_repo != '' }}
     strategy:
       fail-fast: false
       matrix:
         environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
-    runs-on: ${{ fromJson(needs.start-docker-test-runner.outputs.instances) }}
-    steps:
-      - name: Ensure runner dependencies (Ubuntu)
-        run: |
-          set -euo pipefail
-          if command -v docker >/dev/null 2>&1; then
-            exit 0
-          fi
-          sudo apt-get update
-          sudo apt-get install -y docker.io
-
-      - name: Log in to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Pull image
-        run: |
-          set -euo pipefail
-          docker pull "${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}"
-
-      - name: Run full tests
-        run: |
-          set -euo pipefail
-          env_name="${{ matrix.environment.name }}"
-          docker run --rm \
-            -e "PIXI_DEFAULT_ENVIRONMENT=${env_name}-test" \
-            "${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}" \
-            bash -lc "/tmp/environments/${env_name}/full-tests.sh"
-
-  # ── Step 3b: Stop self-hosted GPU runner ───────────────────────────
-  stop-docker-test-runner:
-    name: Stop Docker test runner
-    needs: [start-docker-test-runner, test-docker]
-    if: ${{ always() && needs.start-docker-test-runner.outputs.mapping != '' }}
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
-          role-session-name: gha-stop-docker-test-runner
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Stop runner
-        uses: omsf/stop-aws-gha-runner@v1.0.0
-        with:
-          instance_mapping: ${{ needs.start-docker-test-runner.outputs.mapping }}
-          aws_region_name: ${{ env.AWS_REGION }}
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+    uses: ./.github/workflows/test-docker-reusable.yml
+    with:
+      image_repo: ${{ needs.build-docker.outputs.image_repo }}
+      image_tag: ${{ needs.build-docker.outputs.image_tag }}
+      environment_name: ${{ matrix.environment.name }}
+      full_test_script: ${{ matrix.environment.full_script }}
+      instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
+      region: ${{ needs.lock-environments.outputs.aws_region }}
+    secrets:
+      docker_test_assume_role_arn: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
+      gh_pat: ${{ secrets.GH_PAT }}
 
   # ── Step 4: Promote artifacts ──────────────────────────────────────
   promote:
     name: Promote artifacts
-    # AMI testing is currently disabled above; add `test-ami` back here when that
-    # job is re-enabled.
-    # Restore `needs.test-ami.result == 'success'` in the `if` expression below
-    # when `test-ami` is re-enabled.
+    # AMI testing is intentionally disabled above; keep promotion Docker-gated
+    # unless AMI tests are deliberately restored as a release gate.
     needs: [build-ami, build-docker, test-docker]
     if: >-
       ${{ always() &&

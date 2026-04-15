@@ -1,0 +1,151 @@
+name: Reusable Docker environment test
+
+on:
+  workflow_call:
+    inputs:
+      image_repo:
+        description: Docker repository containing the image to test.
+        required: true
+        type: string
+      image_tag:
+        description: Docker image tag to test.
+        required: true
+        type: string
+      environment_name:
+        description: Logical runtime environment name to validate.
+        required: true
+        type: string
+      full_test_script:
+        description: Repository-relative path to the full test script.
+        required: true
+        type: string
+      instance_type:
+        description: EC2 instance type to use for the self-hosted Docker test runner.
+        required: false
+        type: string
+        default: g5.xlarge
+      region:
+        description: AWS region to use for runner lifecycle API calls.
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      docker_test_assume_role_arn:
+        required: true
+      gh_pat:
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
+  AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
+  AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
+
+jobs:
+  start-runner:
+    name: Start Docker test runner
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      mapping: ${{ steps.aws-start.outputs.mapping }}
+      instances: ${{ steps.aws-start.outputs.instances }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.docker_test_assume_role_arn }}
+          role-session-name: gha-start-docker-test-runner
+          aws-region: ${{ inputs.region }}
+
+      - name: Validate runner configuration
+        run: |
+          set -euo pipefail
+          : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
+          : "${RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
+        env:
+          RUNNER_INSTANCE_TYPE: ${{ inputs.instance_type }}
+
+      - name: Start runner
+        id: aws-start
+        uses: omsf/start-aws-gha-runner@v1.0.0
+        with:
+          aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
+          aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
+          aws_instance_type: ${{ inputs.instance_type }}
+          aws_region_name: ${{ inputs.region }}
+          aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
+        env:
+          GH_PAT: ${{ secrets.gh_pat }}
+
+  test:
+    name: Run Docker test
+    needs: start-runner
+    if: ${{ inputs.image_repo != '' && inputs.image_tag != '' && needs.start-runner.outputs.instances != '' }}
+    runs-on: ${{ fromJson(needs.start-runner.outputs.instances) }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Ensure runner dependencies (Ubuntu)
+        run: |
+          set -euo pipefail
+          if command -v docker >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull image
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+
+      - name: Run full tests
+        run: |
+          set -euo pipefail
+          script_path="${FULL_TEST_SCRIPT#/}"
+          docker run --rm \
+            -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            "${IMAGE_REPO}:${IMAGE_TAG}" \
+            bash "/tmp/${script_path}"
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          FULL_TEST_SCRIPT: ${{ inputs.full_test_script }}
+
+  stop-runner:
+    name: Stop Docker test runner
+    needs: [start-runner, test]
+    if: ${{ always() && needs.start-runner.outputs.mapping != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.docker_test_assume_role_arn }}
+          role-session-name: gha-stop-docker-test-runner
+          aws-region: ${{ inputs.region }}
+
+      - name: Stop runner
+        uses: omsf/stop-aws-gha-runner@v1.0.0
+        with:
+          instance_mapping: ${{ needs.start-runner.outputs.mapping }}
+          aws_region_name: ${{ inputs.region }}
+        env:
+          GH_PAT: ${{ secrets.gh_pat }}
