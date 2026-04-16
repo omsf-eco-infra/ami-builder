@@ -115,6 +115,12 @@ jobs:
       - name: Run full tests
         run: |
           set -euo pipefail
+
+          if [[ ! "${ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[test] Invalid environment name: ${ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
           script_path="${FULL_TEST_SCRIPT#/}"
           docker run --rm \
             -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
