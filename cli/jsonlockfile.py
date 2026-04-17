@@ -781,7 +781,7 @@ def generate(
     "--timestamp",
     required=True,
     type=NonEmptyString(),
-    help="Published image timestamp.",
+    help="Published image timestamp in ISO 8601 format, for example 2026-04-03T12:34:56Z.",
 )
 @click.option(
     "--ami-id",
