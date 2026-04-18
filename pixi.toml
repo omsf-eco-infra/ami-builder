@@ -3,7 +3,7 @@ authors = ["David W.H. Swenson <david.swenson@omsf.io>"]
 channels = ["conda-forge"]
 description = "Add a short description here"
 name = "ami-builder"
-platforms = ["osx-64"]
+platforms = ["osx-64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
