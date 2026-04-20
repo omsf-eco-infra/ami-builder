@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       environment_name:
-        description: Micromamba environment name to validate.
+        description: Logical runtime environment name to validate.
         required: true
         type: string
       full_test_script:
@@ -49,7 +49,7 @@ on:
         description: Default SSM command timeout (seconds) applied when per-test overrides are not provided.
         required: false
         type: number
-        default: 3600
+        default: 21000
       ssm_poll_interval:
         description: Seconds between SSM status polls.
         required: false
@@ -74,7 +74,7 @@ on:
         description: The AMI ID that was tested.
         value: ${{ inputs.ami_id }}
       environment_name:
-        description: The micromamba environment that was validated.
+        description: The logical runtime environment that was validated.
         value: ${{ inputs.environment_name }}
       instance_id:
         description: The EC2 instance launched for testing (if any).
@@ -124,6 +124,7 @@ jobs:
           set -euo pipefail
 
           subnet="${SUBNET_INPUT:-}"
+          name_tag_source="${AMI_NAME:-$AMI_ID}"
 
           args=(
             --ami "${AMI_ID}"
@@ -131,6 +132,7 @@ jobs:
             --security-group "${SECURITY_GROUP_ID}"
             --iam-profile "${INSTANCE_PROFILE_NAME}"
             --wait-timeout "${WAIT_TIMEOUT}"
+            --tag "Name=${name_tag_source}-${ENVIRONMENT_NAME}-test"
             --tag "Purpose=${WORKFLOW_PURPOSE}"
             --tag "Workflow=${WORKFLOW_NAME}"
             --tag "Run=${RUN_ID}"
@@ -169,6 +171,7 @@ jobs:
     needs: start_instance
     if: ${{ needs.start_instance.outputs.instance_id != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     env:
       AWS_REGION: ${{ inputs.region }}
@@ -188,6 +191,7 @@ jobs:
         env:
           INSTANCE_ID: ${{ needs.start_instance.outputs.instance_id }}
           ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          TEST_ENVIRONMENT_NAME: ${{ format('{0}-test', inputs.environment_name) }}
           AMI_ID: ${{ inputs.ami_id }}
           AMI_NAME: ${{ inputs.ami_name }}
           LOG_GROUP_NAME: ${{ secrets.test_log_group_name }}
@@ -200,6 +204,16 @@ jobs:
 
           if [[ -z "${INSTANCE_ID:-}" ]]; then
             echo "[tests] Instance ID is empty" >&2
+            exit 1
+          fi
+
+          if [[ ! "${ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[tests] Invalid environment name: ${ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
+          if [[ ! "${TEST_ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[tests] Invalid test environment name: ${TEST_ENVIRONMENT_NAME}" >&2
             exit 1
           fi
 
@@ -249,7 +263,7 @@ jobs:
             --instance "${INSTANCE_ID}" \
             --script "${script_path}" \
             --log-group "${LOG_GROUP_NAME}" \
-            --env-cmd "source /etc/profile.d/micromamba.sh && micromamba activate ${ENVIRONMENT_NAME}" \
+            --env-cmd "export PIXI_HOME=/home/ubuntu/.pixi-global; eval \"\$(/usr/local/bin/pixi shell-hook -m /home/ubuntu -e ${TEST_ENVIRONMENT_NAME} --shell bash --frozen)\"" \
             --timeout "${timeout_value}" \
             --poll-interval "${poll_interval}" \
             --comment "${comment}"

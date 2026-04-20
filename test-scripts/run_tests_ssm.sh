@@ -11,7 +11,7 @@ Required:
   --log-group LOG_GROUP         CloudWatch Logs group for command output.
 
 Optional:
-  --env-cmd "CMD"               Command to run before the test (e.g., micromamba activation).
+  --env-cmd "CMD"               Command to run before the test (e.g., Pixi shell-hook activation).
   --log-stream NAME             Log stream name to tail (use when you know the exact stream).
   --log-stream-prefix PREFIX    Log stream prefix to tail (default: command-id/INSTANCE/awsrunShellScript).
   --timeout SECONDS             SSM command timeout (default: 3600).

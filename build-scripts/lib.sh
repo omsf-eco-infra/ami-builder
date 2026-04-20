@@ -1,20 +1,15 @@
 #!/usr/bin/env bash
 
 BUILD_ENV="${BUILD_ENV:-ami}"
-MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-/opt/micromamba}"
 
 if [[ "${BUILD_ENV}" == "docker" ]]; then
   TARGET_USER="root"
   TARGET_GROUP="root"
   USE_SUDO="false"
-  AUTO_ACTIVATE_DEFAULT="false"
-  MICROMAMBA_USE_PROFILE="false"
 else
   TARGET_USER="ubuntu"
   TARGET_GROUP="ubuntu"
   USE_SUDO="true"
-  AUTO_ACTIVATE_DEFAULT="true"
-  MICROMAMBA_USE_PROFILE="true"
 fi
 
 maybe_sudo() {

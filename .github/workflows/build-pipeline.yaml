@@ -1,0 +1,411 @@
+name: Build Pipeline
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 12 * * 1"
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+env:
+  AWS_REGION: us-east-1
+  DEFAULT_INSTANCE_TYPE: g5.xlarge
+  DOCKER_REPOSITORY: ghcr.io/omsf-eco-infra/omsf
+
+jobs:
+  # ── Step 1: Prepare shared build inputs ────────────────────────────
+  lock-environments:
+    name: Prepare build context
+    runs-on: ubuntu-latest
+    outputs:
+      environment_names: ${{ steps.context.outputs.environment_names }}
+      selected_environment_names: ${{ steps.context.outputs.selected_environment_names }}
+      environment_matrix: ${{ steps.context.outputs.environment_matrix }}
+      packer_environments: ${{ steps.context.outputs.packer_environments }}
+      image_name: ${{ steps.context.outputs.image_name }}
+      default_environment: ${{ steps.context.outputs.default_environment }}
+      build_kind: ${{ steps.context.outputs.build_kind }}
+      ami_name_suffix: ${{ steps.context.outputs.ami_name_suffix }}
+      build_timestamp: ${{ steps.context.outputs.build_timestamp }}
+      additional_tags: ${{ steps.context.outputs.additional_tags }}
+      aws_region: ${{ steps.context.outputs.aws_region }}
+      default_instance_type: ${{ steps.context.outputs.default_instance_type }}
+      docker_repository: ${{ steps.context.outputs.docker_repository }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pixi
+        run: |
+          set -euo pipefail
+          PIXI_VERSION="${PIXI_VERSION:-v0.63.0}"
+          export PIXI_VERSION
+          curl -fsSL https://pixi.sh/install.sh | bash
+          echo "${HOME}/.pixi/bin" >> "${GITHUB_PATH}"
+
+      - name: Generate lockfile
+        run: |
+          set -euo pipefail
+          rm -f environments/pixi.lock
+          pixi lock --manifest-path environments/pixi.toml
+
+      - name: Upload lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixi-lock
+          path: environments/pixi.lock
+          retention-days: 7
+
+      - name: Compute shared build context
+        id: context
+        shell: python
+        run: |
+          import datetime
+          import importlib.util
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          helper_path = Path("environments/pixi-environment-metadata.py")
+          toml_path = Path("environments/pixi.toml")
+          spec = importlib.util.spec_from_file_location("pixi_environment_metadata", helper_path)
+          if spec is None or spec.loader is None:
+              raise SystemExit(f"Failed to load metadata helper from {helper_path}")
+          metadata_helper = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = metadata_helper
+          spec.loader.exec_module(metadata_helper)
+
+          metadata = metadata_helper.load_metadata(toml_path)
+          env_names = metadata["selected_environments"]
+          if not env_names:
+              raise SystemExit("No environments found in pixi.toml")
+
+          packer_environments = json.dumps(env_names, separators=(",", ":"))
+          environment_matrix = json.dumps(metadata["environment_matrix"], separators=(",", ":"))
+
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as fp:
+              event = json.load(fp)
+
+          now = datetime.datetime.now(datetime.UTC)
+          today = now.strftime("%Y%m%d")
+          build_timestamp = str(int(now.timestamp()))
+          full_sha = os.environ["GITHUB_SHA"]
+          short_sha = full_sha[:7]
+          suffix = f"{today}-{short_sha}"
+          extra_tags = {}
+          delete_after_date = now + datetime.timedelta(days=7)
+
+          if event_name == "pull_request":
+              build_kind = "pr"
+              pr_number = event.get("number")
+              head_sha = event.get("pull_request", {}).get("head", {}).get("sha", full_sha)
+              short_sha = head_sha[:7]
+              suffix = f"pr{pr_number}-{today}-{short_sha}"
+              extra_tags["pr"] = str(pr_number) if pr_number is not None else "unknown"
+          elif event_name in {"schedule", "workflow_dispatch", "push"}:
+              build_kind = {
+                  "schedule": "scheduled",
+                  "workflow_dispatch": "manual",
+                  "push": "push",
+              }[event_name]
+          else:
+              raise SystemExit(f"Unsupported event type for build metadata: {event_name}")
+
+          tags = {
+              "omsf-ami-type": build_kind,
+              "commit": short_sha,
+              "delete-after": delete_after_date.strftime("%Y-%m-%d"),
+          }
+          tags.update(extra_tags)
+
+          print(f"Image name: {metadata['image_name']}")
+          print(f"Default environment: {metadata['default_environment']}")
+          print(f"Selected environments: {env_names}")
+          print(f"Build kind: {build_kind}")
+          print(f"Image suffix: {suffix}")
+          print(f"Build timestamp: {build_timestamp}")
+
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+          with output_path.open("a", encoding="utf-8") as fh:
+              fh.write(f"environment_names={packer_environments}\n")
+              fh.write(f"selected_environment_names={packer_environments}\n")
+              fh.write(f"environment_matrix={environment_matrix}\n")
+              fh.write(f"packer_environments={packer_environments}\n")
+              fh.write(f"image_name={metadata['image_name']}\n")
+              fh.write(f"default_environment={metadata['default_environment']}\n")
+              fh.write(f"build_kind={build_kind}\n")
+              fh.write(f"ami_name_suffix={suffix}\n")
+              fh.write(f"build_timestamp={build_timestamp}\n")
+              fh.write(f"additional_tags={json.dumps(tags)}\n")
+              fh.write(f"aws_region={os.environ['AWS_REGION']}\n")
+              fh.write(f"default_instance_type={os.environ['DEFAULT_INSTANCE_TYPE']}\n")
+              fh.write(f"docker_repository={os.environ['DOCKER_REPOSITORY']}\n")
+
+  # ── Step 2a: Build AMI ─────────────────────────────────────────────
+  build-ami:
+    name: Build AMI
+    needs: lock-environments
+    runs-on: ubuntu-latest
+    outputs:
+      ami_id: ${{ steps.collect.outputs.ami_id }}
+      ami_name: ${{ steps.collect.outputs.ami_name }}
+      aws_region: ${{ needs.lock-environments.outputs.aws_region }}
+      default_instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download lockfile
+        uses: actions/download-artifact@v4
+        with:
+          name: pixi-lock
+          path: environments
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-builder
+          aws-region: ${{ needs.lock-environments.outputs.aws_region }}
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          version: latest
+
+      - name: Build AMI
+        env:
+          IMAGE_NAME: ${{ needs.lock-environments.outputs.image_name }}
+          DEFAULT_ENVIRONMENT: ${{ needs.lock-environments.outputs.default_environment }}
+          PACKER_ENVIRONMENTS: ${{ needs.lock-environments.outputs.packer_environments }}
+          AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
+          ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
+        run: |
+          set -euo pipefail
+          packer init build-ami.pkr.hcl
+          packer build \
+            -var "ami_name=${IMAGE_NAME}" \
+            -var "default_environment=${DEFAULT_ENVIRONMENT}" \
+            -var "environments=${PACKER_ENVIRONMENTS}" \
+            -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
+            -var "additional_tags=${ADDITIONAL_TAGS}" \
+            build-ami.pkr.hcl
+        shell: bash
+
+      - name: Collect packer manifest outputs
+        id: collect
+        uses: ./.github/actions/collect-packer-metadata
+        with:
+          manifest_path: packer-manifest.json
+          kind: ami
+
+  # ── Step 2b: Build Docker image ────────────────────────────────────
+  build-docker:
+    name: Build Docker Image
+    needs: lock-environments
+    runs-on: ubuntu-latest
+    outputs:
+      image_repo: ${{ steps.collect.outputs.image_repo }}
+      image_tag: ${{ steps.collect.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download lockfile
+        uses: actions/download-artifact@v4
+        with:
+          name: pixi-lock
+          path: environments
+
+      - name: Set up Packer
+        uses: hashicorp/setup-packer@v3
+        with:
+          version: latest
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build Docker image
+        env:
+          IMAGE_NAME: ${{ needs.lock-environments.outputs.image_name }}
+          DEFAULT_ENVIRONMENT: ${{ needs.lock-environments.outputs.default_environment }}
+          PACKER_ENVIRONMENTS: ${{ needs.lock-environments.outputs.packer_environments }}
+          AMI_NAME_SUFFIX: ${{ needs.lock-environments.outputs.ami_name_suffix }}
+          BUILD_TIMESTAMP: ${{ needs.lock-environments.outputs.build_timestamp }}
+          ADDITIONAL_TAGS: ${{ needs.lock-environments.outputs.additional_tags }}
+          DOCKER_REPO: ${{ needs.lock-environments.outputs.docker_repository }}
+        run: |
+          set -euo pipefail
+          packer init build-docker.pkr.hcl
+          packer build \
+            -var "ami_name=${IMAGE_NAME}" \
+            -var "default_environment=${DEFAULT_ENVIRONMENT}" \
+            -var "environments=${PACKER_ENVIRONMENTS}" \
+            -var "ami_name_suffix=${AMI_NAME_SUFFIX}" \
+            -var "build_timestamp=${BUILD_TIMESTAMP}" \
+            -var "additional_tags=${ADDITIONAL_TAGS}" \
+            -var "docker_repository=${DOCKER_REPO}" \
+            build-docker.pkr.hcl
+        shell: bash
+
+      - name: Push Docker image
+        run: |
+          set -euo pipefail
+          docker push --all-tags "${{ needs.lock-environments.outputs.docker_repository }}"
+
+      - name: Collect packer manifest outputs
+        id: collect
+        uses: ./.github/actions/collect-packer-metadata
+        with:
+          manifest_path: packer-docker-manifest.json
+          kind: docker
+          image_repo: ${{ needs.lock-environments.outputs.docker_repository }}
+
+  # ── Step 3a: Test AMI environments ─────────────────────────────────
+  # Intentionally dormant while AMI test hangs are under investigation.
+  # The pipeline still computes `environment_matrix`, and the reusable workflow
+  # below can fan out one isolated EC2 test instance per environment when AMI
+  # testing is re-enabled. When restoring this job, also decide whether AMI test
+  # success should gate the `promote` job below.
+  #
+  # test-ami:
+  #   name: Test AMI (${{ matrix.environment.name }})
+  #   needs: [lock-environments, build-ami]
+  #   if: ${{ needs.build-ami.outputs.ami_id != '' }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
+  #   uses: ./.github/workflows/test-ami-reusable.yml
+  #   with:
+  #     ami_id: ${{ needs.build-ami.outputs.ami_id }}
+  #     ami_name: ${{ needs.build-ami.outputs.ami_name }}
+  #     environment_name: ${{ matrix.environment.name }}
+  #     full_test_script: ${{ matrix.environment.full_script }}
+  #     full_test_timeout: 21000
+  #     instance_type: ${{ needs.build-ami.outputs.default_instance_type }}
+  #     region: ${{ needs.build-ami.outputs.aws_region }}
+  #   secrets:
+  #     test_assume_role_arn: ${{ secrets.AWS_TEST_ASSUME_ROLE_ARN }}
+  #     test_security_group_id: ${{ secrets.TEST_SECURITY_GROUP_ID }}
+  #     test_instance_profile_name: ${{ secrets.TEST_INSTANCE_PROFILE_NAME }}
+  #     test_log_group_name: ${{ secrets.TEST_LOG_GROUP_NAME }}
+
+  # ── Step 3b: Test Docker environments ──────────────────────────────
+  test-docker:
+    name: Test Docker (${{ matrix.environment.name }})
+    needs: [lock-environments, build-docker]
+    if: ${{ needs.build-docker.outputs.image_repo != '' }}
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
+    uses: ./.github/workflows/test-docker-reusable.yml
+    with:
+      image_repo: ${{ needs.build-docker.outputs.image_repo }}
+      image_tag: ${{ needs.build-docker.outputs.image_tag }}
+      environment_name: ${{ matrix.environment.name }}
+      full_test_script: ${{ matrix.environment.full_script }}
+      instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
+      region: ${{ needs.lock-environments.outputs.aws_region }}
+    secrets:
+      docker_test_assume_role_arn: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
+      gh_pat: ${{ secrets.GH_PAT }}
+
+  # ── Step 4: Promote artifacts ──────────────────────────────────────
+  promote:
+    name: Promote artifacts
+    # AMI testing is intentionally disabled above; keep promotion Docker-gated
+    # unless AMI tests are deliberately restored as a release gate.
+    needs: [build-ami, build-docker, test-docker]
+    if: >-
+      ${{ always() &&
+          github.event_name != 'pull_request' &&
+          needs.build-ami.outputs.ami_id != '' &&
+          needs.build-docker.outputs.image_repo != '' &&
+          needs.test-docker.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # ── AMI promotion ──────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip boto3 click
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
+          role-session-name: gha-ami-publish
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recommend AMI state
+        id: recommend
+        run: |
+          set -euo pipefail
+          state=$(python cli/ami_cli.py recommend-state)
+          echo "state=${state}" | tee -a "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Publish or bless AMI
+        env:
+          AMI_ID: ${{ needs.build-ami.outputs.ami_id }}
+          RECOMMENDED_STATE: ${{ steps.recommend.outputs.state }}
+        run: |
+          set -euo pipefail
+          case "$RECOMMENDED_STATE" in
+            bless|publish)
+              python cli/ami_cli.py "$RECOMMENDED_STATE" "$AMI_ID"
+              ;;
+            *)
+              echo "Recommended state is '$RECOMMENDED_STATE'; no publish/bless action."
+              ;;
+          esac
+        shell: bash
+
+      # ── Docker promotion ───────────────────────────────────────────
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Promote Docker image
+        env:
+          IMAGE_REPO: ${{ needs.build-docker.outputs.image_repo }}
+          IMAGE_TAG: ${{ needs.build-docker.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y%m%d)"
+
+          echo "Pulling build image ${IMAGE_REPO}:${IMAGE_TAG}"
+          docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
+
+          echo "Tagging as latest and ${today}"
+          docker tag "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:latest"
+          docker tag "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:${today}"
+
+          echo "Pushing promoted tags"
+          docker push "${IMAGE_REPO}:latest"
+          docker push "${IMAGE_REPO}:${today}"
+        shell: bash

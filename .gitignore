@@ -2,6 +2,7 @@
 .terraform/
 
 packer-manifest.json
+packer-docker-manifest.json
 
 # .tfstate files
 *.tfstate
@@ -41,6 +42,9 @@ terraform.rc
 # pixi environments
 .pixi
 *.egg-info
+
+# environments/pixi.lock is generated fresh in CI (not committed)
+environments/pixi.lock
 
 # Python
 __pycache__/
