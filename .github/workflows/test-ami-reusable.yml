@@ -207,6 +207,16 @@ jobs:
             exit 1
           fi
 
+          if [[ ! "${ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[tests] Invalid environment name: ${ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
+          if [[ ! "${TEST_ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[tests] Invalid test environment name: ${TEST_ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
           script_input="${FULL_TEST_SCRIPT:-}"
           if [[ -z "${script_input}" ]]; then
             echo "[tests] Full test script input is required" >&2
