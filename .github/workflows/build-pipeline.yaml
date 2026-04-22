@@ -164,9 +164,9 @@ jobs:
                   "environment": environment_name,
                   "platform": platform,
                   "slug": f"{environment_name}-{platform}",
-                  "environment_yaml_path": (
+                  "conda_explicit_spec_path": (
                       f"public/artifacts/{published_name}/{environment_name}-{platform}/"
-                      f"{environment_name}-{platform}.environment.yaml"
+                      f"{environment_name}-{platform}.conda-spec.txt"
                   ),
               }
               for environment_name in selected_site_environments
@@ -511,15 +511,21 @@ jobs:
 
           while IFS=$'\t' read -r environment_name platform output_path; do
             mkdir -p "$(dirname "${output_path}")"
-            pixi workspace export conda-environment \
+            pixi workspace export conda-explicit-spec \
               --manifest-path environments/pixi.toml \
+              --frozen \
               --environment "${environment_name}" \
               --platform "${platform}" \
-              "${output_path}"
+              "$(dirname "${output_path}")"
+
+            generated_path="$(dirname "${output_path}")/${environment_name}_${platform}_conda_spec.txt"
+            if [[ "${generated_path}" != "${output_path}" ]]; then
+              mv "${generated_path}" "${output_path}"
+            fi
           done < <(
             jq -r '
               .site_export_matrix[]
-              | [.environment, .platform, .environment_yaml_path]
+              | [.environment, .platform, .conda_explicit_spec_path]
               | @tsv
             ' "${BUILD_CONTEXT_PATH}"
           )
