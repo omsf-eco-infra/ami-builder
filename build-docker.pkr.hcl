@@ -253,6 +253,7 @@ build {
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
       "BUILD_ENV=docker",
+      "CONDA_OVERRIDE_CUDA=12",
       "OMSF_PIXI_WORKSPACE=/root",
       "PIXI_HOME=/root/.pixi-global",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
@@ -282,6 +283,7 @@ build {
       environment_vars = [
         "PIXI_ENV_NAME=${provisioner.value}",
         "BUILD_ENV=docker",
+        "CONDA_OVERRIDE_CUDA=12",
         "OMSF_PIXI_WORKSPACE=/root",
         "PIXI_HOME=/root/.pixi-global",
         "KMP_AFFINITY=disabled",
