@@ -1,0 +1,21 @@
+[workspace]
+authors = ["David W.H. Swenson <david.swenson@omsf.io>"]
+channels = ["conda-forge"]
+description = "Pixi workspace for repo tooling related to building and testing machine images"
+name = "ami-builder"
+platforms = ["osx-64", "linux-64"]
+version = "0.1.0"
+
+[tasks]
+build-ami = "packer init build-ami.pkr.hcl && packer build -var 'ami_name=omsf' -var 'default_environment=openfe' -var 'environments=[\"omsf\"]' build-ami.pkr.hcl"
+build-docker = "packer init build-docker.pkr.hcl && packer build -var 'ami_name=omsf' -var 'default_environment=openfe' -var 'environments=[\"omsf\"]' -var \"build_timestamp=$(date +%s)\" build-docker.pkr.hcl"
+
+[dependencies]
+python = "*"
+boto3 = "*"
+click = "*"
+pyyaml = "*"
+
+pytest = "*"
+moto = "*"
+pytest-cov = "*"

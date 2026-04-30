@@ -34,6 +34,9 @@ jobs:
       build_kind: ${{ steps.context.outputs.build_kind }}
       ami_name_suffix: ${{ steps.context.outputs.ami_name_suffix }}
       build_timestamp: ${{ steps.context.outputs.build_timestamp }}
+      published_date: ${{ steps.context.outputs.published_date }}
+      published_timestamp: ${{ steps.context.outputs.published_timestamp }}
+      published_name: ${{ steps.context.outputs.published_name }}
       additional_tags: ${{ steps.context.outputs.additional_tags }}
       aws_region: ${{ steps.context.outputs.aws_region }}
       default_instance_type: ${{ steps.context.outputs.default_instance_type }}
@@ -46,13 +49,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pixi
-        run: |
-          set -euo pipefail
-          PIXI_VERSION="${PIXI_VERSION:-v0.63.0}"
-          export PIXI_VERSION
-          curl -fsSL https://pixi.sh/install.sh | bash
-          echo "${HOME}/.pixi/bin" >> "${GITHUB_PATH}"
+      - name: Set up Pixi
+        uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          pixi-version: v0.63.0
+          cache: false
 
       - name: Generate lockfile
         run: |
@@ -76,6 +77,7 @@ jobs:
           import json
           import os
           import sys
+          import tomllib
           from pathlib import Path
 
           helper_path = Path("environments/pixi-environment-metadata.py")
@@ -92,6 +94,21 @@ jobs:
           if not env_names:
               raise SystemExit("No environments found in pixi.toml")
 
+          with toml_path.open("rb") as fp:
+              manifest = tomllib.load(fp)
+
+          workspace = manifest.get("workspace")
+          if not isinstance(workspace, dict):
+              raise SystemExit("Workspace metadata is missing from pixi.toml")
+
+          platforms = workspace.get("platforms")
+          if not isinstance(platforms, list) or not platforms:
+              raise SystemExit("No workspace platforms found in pixi.toml")
+
+          selected_site_environments = []
+          for env_name in env_names:
+              selected_site_environments.extend((env_name, f"{env_name}-test"))
+
           packer_environments = json.dumps(env_names, separators=(",", ":"))
           environment_matrix = json.dumps(metadata["environment_matrix"], separators=(",", ":"))
 
@@ -100,8 +117,12 @@ jobs:
               event = json.load(fp)
 
           now = datetime.datetime.now(datetime.UTC)
-          today = now.strftime("%Y%m%d")
           build_timestamp = str(int(now.timestamp()))
+          build_time = datetime.datetime.fromtimestamp(int(build_timestamp), datetime.UTC)
+          today = build_time.strftime("%Y%m%d")
+          published_date = today
+          published_timestamp = build_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+          published_name = f"{metadata['image_name']}-{published_date}"
           full_sha = os.environ["GITHUB_SHA"]
           short_sha = full_sha[:7]
           suffix = f"{today}-{short_sha}"
@@ -138,6 +159,37 @@ jobs:
           print(f"Image suffix: {suffix}")
           print(f"Build timestamp: {build_timestamp}")
 
+          site_export_matrix = [
+              {
+                  "environment": environment_name,
+                  "platform": platform,
+                  "slug": f"{environment_name}-{platform}",
+                  "conda_explicit_spec_path": (
+                      f"public/artifacts/{published_name}/{environment_name}-{platform}/"
+                      f"{environment_name}-{platform}.conda-spec.txt"
+                  ),
+              }
+              for environment_name in selected_site_environments
+              for platform in platforms
+          ]
+          build_context = {
+              "image_name": metadata["image_name"],
+              "default_environment": metadata["default_environment"],
+              "selected_runtime_environments": env_names,
+              "selected_site_environments": selected_site_environments,
+              "platforms": platforms,
+              "build_timestamp": build_timestamp,
+              "published_date": published_date,
+              "published_timestamp": published_timestamp,
+              "published_name": published_name,
+              "docker_repository": os.environ["DOCKER_REPOSITORY"],
+              "site_export_matrix": site_export_matrix,
+          }
+          Path("build-context.json").write_text(
+              json.dumps(build_context, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
           output_path = Path(os.environ["GITHUB_OUTPUT"])
           with output_path.open("a", encoding="utf-8") as fh:
               fh.write(f"environment_names={packer_environments}\n")
@@ -149,10 +201,20 @@ jobs:
               fh.write(f"build_kind={build_kind}\n")
               fh.write(f"ami_name_suffix={suffix}\n")
               fh.write(f"build_timestamp={build_timestamp}\n")
+              fh.write(f"published_date={published_date}\n")
+              fh.write(f"published_timestamp={published_timestamp}\n")
+              fh.write(f"published_name={published_name}\n")
               fh.write(f"additional_tags={json.dumps(tags)}\n")
               fh.write(f"aws_region={os.environ['AWS_REGION']}\n")
               fh.write(f"default_instance_type={os.environ['DEFAULT_INSTANCE_TYPE']}\n")
               fh.write(f"docker_repository={os.environ['DOCKER_REPOSITORY']}\n")
+
+      - name: Upload build context
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-context
+          path: build-context.json
+          retention-days: 7
 
   # ── Step 2a: Build AMI ─────────────────────────────────────────────
   build-ami:
@@ -331,9 +393,11 @@ jobs:
   # ── Step 4: Promote artifacts ──────────────────────────────────────
   promote:
     name: Promote artifacts
-    # AMI testing is intentionally disabled above; keep promotion Docker-gated
-    # unless AMI tests are deliberately restored as a release gate.
-    needs: [build-ami, build-docker, test-docker]
+    # AMI testing is currently disabled above; add `test-ami` back here when that
+    # job is re-enabled.
+    # Restore `needs.test-ami.result == 'success'` in the `if` expression below
+    # when `test-ami` is re-enabled.
+    needs: [lock-environments, build-ami, build-docker, test-docker]
     if: >-
       ${{ always() &&
           github.event_name != 'pull_request' &&
@@ -345,14 +409,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Download lockfile
+        uses: actions/download-artifact@v4
+        with:
+          name: pixi-lock
+          path: environments
+
+      - name: Download build context
+        uses: actions/download-artifact@v4
+        with:
+          name: build-context
+          path: workflow-metadata
+
       # ── AMI promotion ──────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Set up Pixi
+        uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          pixi-version: v0.63.0
+          cache: false
+
       - name: Install dependencies
-        run: python -m pip install --upgrade pip boto3 click
+        run: python -m pip install --upgrade pip boto3 click pyyaml
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -394,18 +476,85 @@ jobs:
         env:
           IMAGE_REPO: ${{ needs.build-docker.outputs.image_repo }}
           IMAGE_TAG: ${{ needs.build-docker.outputs.image_tag }}
+          PUBLISHED_DATE: ${{ needs.lock-environments.outputs.published_date }}
         run: |
           set -euo pipefail
-          today="$(date -u +%Y%m%d)"
 
           echo "Pulling build image ${IMAGE_REPO}:${IMAGE_TAG}"
           docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
 
-          echo "Tagging as latest and ${today}"
+          echo "Tagging as latest and ${PUBLISHED_DATE}"
           docker tag "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:latest"
-          docker tag "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:${today}"
+          docker tag "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:${PUBLISHED_DATE}"
 
           echo "Pushing promoted tags"
           docker push "${IMAGE_REPO}:latest"
-          docker push "${IMAGE_REPO}:${today}"
+          docker push "${IMAGE_REPO}:${PUBLISHED_DATE}"
         shell: bash
+
+      # ── Site metadata export ───────────────────────────────────────
+      - name: Generate promoted site metadata
+        env:
+          AMI_ID: ${{ needs.build-ami.outputs.ami_id }}
+          BUILD_CONTEXT_PATH: workflow-metadata/build-context.json
+          IMAGE_REPO: ${{ needs.build-docker.outputs.image_repo }}
+          PUBLISHED_DATE: ${{ needs.lock-environments.outputs.published_date }}
+        run: |
+          set -euo pipefail
+
+          published_name="$(jq -r '.published_name' "${BUILD_CONTEXT_PATH}")"
+          published_timestamp="$(jq -r '.published_timestamp' "${BUILD_CONTEXT_PATH}")"
+          published_docker_image="${IMAGE_REPO}:${PUBLISHED_DATE}"
+
+          mkdir -p public/lockfiles
+          cp environments/pixi.lock "public/lockfiles/${published_name}.pixi.lock"
+
+          while IFS=$'\t' read -r environment_name platform output_path; do
+            mkdir -p "$(dirname "${output_path}")"
+            pixi workspace export conda-explicit-spec \
+              --manifest-path environments/pixi.toml \
+              --frozen \
+              --environment "${environment_name}" \
+              --platform "${platform}" \
+              "$(dirname "${output_path}")"
+
+            generated_path="$(dirname "${output_path}")/${environment_name}_${platform}_conda_spec.txt"
+            if [[ "${generated_path}" != "${output_path}" ]]; then
+              mv "${generated_path}" "${output_path}"
+            fi
+          done < <(
+            jq -r '
+              .site_export_matrix[]
+              | [.environment, .platform, .conda_explicit_spec_path]
+              | @tsv
+            ' "${BUILD_CONTEXT_PATH}"
+          )
+
+          jsonlockfile_command=(
+            python cli/jsonlockfile.py
+            --lockfile environments/pixi.lock
+            --manifest environments/pixi.toml
+            --output-root public
+            --name "${published_name}"
+            --timestamp "${published_timestamp}"
+            --ami-id "${AMI_ID}"
+            --docker-image "${published_docker_image}"
+          )
+
+          # Keep these workflow-local for now; move them to workflow inputs once
+          # the promoted metadata contract is finalized.
+          jsonlockfile_command+=(
+            --summary-package "OpenFE=openfe"
+            --summary-package "OpenFF-Toolkit=openff-toolkit"
+            --summary-package "OpenFold=openfold3"
+          )
+
+          "${jsonlockfile_command[@]}"
+        shell: bash
+
+      - name: Upload promoted site artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: promoted-site-artifacts
+          path: public
+          retention-days: 7
