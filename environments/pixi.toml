@@ -15,6 +15,10 @@ environments = ["omsf", "openfe", "openfold3"]
 [system-requirements]
 cuda = "12"
 
+# Shared workaround dependencies
+[feature.workaround.dependencies]
+openff-packmol = "*"
+
 
 # OpenFE
 [feature.openfe.dependencies]
@@ -23,12 +27,12 @@ openfe = "*"
 [feature.openfe-test]
 
 [environments.openfe]
-features = ["openfe"]
+features = ["workaround", "openfe"]
 solve-group = "openfe"
 no-default-feature = true
 
 [environments.openfe-test]
-features = ["openfe", "openfe-test"]
+features = ["workaround", "openfe", "openfe-test"]
 solve-group = "openfe"
 no-default-feature = true
 
@@ -85,24 +89,24 @@ ruff = "*"
 debugpy = "*"
 
 [environments.openfold3]
-features = ["openfold3"]
+features = ["workaround", "openfold3"]
 solve-group = "openfold3"
 no-default-feature = true
 
 [environments.openfold3-test]
-features = ["openfold3", "openfold3-test"]
+features = ["workaround", "openfold3", "openfold3-test"]
 solve-group = "openfold3"
 no-default-feature = true
 
 # OMSF
 [environments.omsf]
-features = ["openfe", "openfold3"]
+features = ["workaround", "openfe", "openfold3"]
 solve-group = "omsf"
 no-default-feature = true
 
 [environments.omsf-test]
 features = [
-  "openfe", "openfe-test", "openfold3", "openfold3-test",
+  "workaround", "openfe", "openfe-test", "openfold3", "openfold3-test",
 ]
 solve-group = "omsf"
 no-default-feature = true
