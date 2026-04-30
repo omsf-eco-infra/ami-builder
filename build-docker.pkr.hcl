@@ -158,6 +158,7 @@ source "docker" "this" {
     "ENV PIXI_DEFAULT_ENVIRONMENT=${local.default_environment}",
     "ENV OMSF_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
     "ENV PIXI_HOME=/root/.pixi-global",
+    "ENV CONDA_OVERRIDE_CUDA=12",
     "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
     "CMD [\"bash\", \"-l\"]",
   ], local.label_changes)

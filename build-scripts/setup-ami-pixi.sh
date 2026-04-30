@@ -25,6 +25,7 @@ fi
 
 workspace_root="${OMSF_PIXI_WORKSPACE:-$(resolve_target_home)}"
 pixi_home="${PIXI_HOME:-${workspace_root}/.pixi-global}"
+conda_override_cuda="${CONDA_OVERRIDE_CUDA:-12}"
 manifest_source="${PIXI_MANIFEST_SOURCE:-/tmp/environments/pixi.toml}"
 lock_source="${PIXI_LOCK_SOURCE:-${manifest_source%/*}/pixi.lock}"
 conda_pypi_map_source="${CONDA_PYPI_MAP_SOURCE:-${manifest_source%/*}/conda-pypi-map.json}"
@@ -86,6 +87,7 @@ for env_dir in "${env_dirs[@]}"; do
   run_as_target_user env \
     HOME="${target_home}" \
     PIXI_HOME="${pixi_home}" \
+    CONDA_OVERRIDE_CUDA="${conda_override_cuda}" \
     /usr/local/bin/pixi install --frozen -m "${target_manifest}" -e "${env_basename}" --no-progress
 
   available_envs+=("${env_basename}")
@@ -113,6 +115,7 @@ export OMSF_PIXI_WORKSPACE="${workspace_root}"
 export OMSF_ENVIRONMENTS="${available_envs_str}"
 export PIXI_DEFAULT_ENVIRONMENT="${default_env_name}"
 export PIXI_HOME="${pixi_home}"
+export CONDA_OVERRIDE_CUDA="${conda_override_cuda}"
 EOF
 maybe_sudo chmod 644 "${profile_script}"
 
@@ -136,6 +139,7 @@ echo "[setup_ami_pixi] Cleaning pixi cache"
 run_as_target_user env \
   HOME="${target_home}" \
   PIXI_HOME="${pixi_home}" \
+  CONDA_OVERRIDE_CUDA="${conda_override_cuda}" \
   /usr/local/bin/pixi clean cache -y --no-progress || true
 
 echo "[setup_ami_pixi] Done."

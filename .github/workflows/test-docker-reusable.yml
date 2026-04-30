@@ -112,6 +112,25 @@ jobs:
           IMAGE_REPO: ${{ inputs.image_repo }}
           IMAGE_TAG: ${{ inputs.image_tag }}
 
+      - name: Verify GPU runtime
+        run: |
+          set -euo pipefail
+
+          if ! command -v nvidia-smi >/dev/null 2>&1; then
+            echo "[test] nvidia-smi is not available on the Docker test runner" >&2
+            exit 1
+          fi
+          nvidia-smi -L
+
+          docker run --rm --gpus all \
+            -e "NVIDIA_VISIBLE_DEVICES=all" \
+            -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility" \
+            "${IMAGE_REPO}:${IMAGE_TAG}" \
+            nvidia-smi -L
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+
       - name: Run full tests
         run: |
           set -euo pipefail
@@ -122,8 +141,11 @@ jobs:
           fi
 
           script_path="${FULL_TEST_SCRIPT#/}"
-          docker run --rm \
+          docker run --rm --gpus all \
             -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            -e "CONDA_OVERRIDE_CUDA=12" \
+            -e "NVIDIA_VISIBLE_DEVICES=all" \
+            -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility" \
             "${IMAGE_REPO}:${IMAGE_TAG}" \
             bash "/tmp/${script_path}"
         env:
