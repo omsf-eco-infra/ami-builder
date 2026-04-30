@@ -10,7 +10,7 @@ version = "0.1.0"
 [tool.image-builder]
 image_name = "omsf"
 default_environment = "omsf"
-environments = ["omsf", "openfe"]
+environments = ["omsf", "openfe", "openfold3"]
 
 [system-requirements]
 cuda = "12"

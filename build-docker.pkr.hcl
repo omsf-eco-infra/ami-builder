@@ -210,6 +210,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "environments/conda-pypi-map.json"
+    destination = "${local.remote_environment_root}/conda-pypi-map.json"
+  }
+
+  provisioner "file" {
     source      = "environments/pixi.lock"
     destination = "${local.remote_pixi_lock}"
   }
