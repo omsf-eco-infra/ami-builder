@@ -270,6 +270,7 @@ build {
     environment_vars = [
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
+      "CONDA_OVERRIDE_CUDA=12",
       "OMSF_PIXI_WORKSPACE=/home/ubuntu",
       "PIXI_HOME=/home/ubuntu/.pixi-global",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
@@ -288,6 +289,7 @@ build {
       script = "build-scripts/ami-pixi-smoke-test.sh"
       environment_vars = [
         "PIXI_ENV_NAME=${provisioner.value}",
+        "CONDA_OVERRIDE_CUDA=12",
         "OMSF_PIXI_WORKSPACE=/home/ubuntu",
         "PIXI_HOME=/home/ubuntu/.pixi-global",
       ]
