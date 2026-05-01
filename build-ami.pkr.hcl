@@ -72,6 +72,11 @@ locals {
     basename(dirname(path)) => path
   }
 
+  environment_post_install_scripts = {
+    for path in fileset(path.root, "environments/*/post-install.sh") :
+    basename(dirname(path)) => path
+  }
+
   available_environment_paths = {
     for env in sort(distinct(concat(
       keys(local.environment_smoke_scripts),
@@ -95,6 +100,11 @@ locals {
   missing_full_scripts = [
     for env in local.enabled_environment_names : env
     if length(trimspace(lookup(local.environment_full_scripts, env, ""))) == 0
+  ]
+
+  missing_post_install_scripts = [
+    for env in local.enabled_environment_names : env
+    if length(trimspace(lookup(local.environment_post_install_scripts, env, ""))) == 0
   ]
 
   default_environment = trimspace(var.default_environment)
@@ -259,6 +269,7 @@ build {
       "MISSING_ENVIRONMENTS=${join(" ", local.missing_environment_names)}",
       "MISSING_SMOKE=${join(" ", local.missing_smoke_scripts)}",
       "MISSING_FULL=${join(" ", local.missing_full_scripts)}",
+      "MISSING_POST_INSTALL=${join(" ", local.missing_post_install_scripts)}",
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "PIXI_MANIFEST_PATH=${local.remote_pixi_manifest}",
       "PIXI_METADATA_HELPER=${local.remote_pixi_helper}",
@@ -275,6 +286,21 @@ build {
       "PIXI_HOME=/home/ubuntu/.pixi-global",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
     ]
+  }
+
+  dynamic "provisioner" {
+    for_each = local.enabled_environment_names
+    labels   = ["shell"]
+    content {
+      script = "build-scripts/ami-pixi-post-install.sh"
+      environment_vars = [
+        "PIXI_ENV_NAME=${provisioner.value}",
+        "CONDA_OVERRIDE_CUDA=12",
+        "OMSF_PIXI_WORKSPACE=/home/ubuntu",
+        "PIXI_HOME=/home/ubuntu/.pixi-global",
+      ]
+      execute_command = "chmod +x '{{ .Path }}'; {{ .Vars }} '{{ .Path }}' '${local.remote_environment_root}/${provisioner.value}/post-install.sh'"
+    }
   }
 
   ## Smoke tests

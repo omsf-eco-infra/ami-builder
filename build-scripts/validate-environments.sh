@@ -6,6 +6,7 @@ echo "[validate_env] Starting environment validation"
 missing_envs="${MISSING_ENVIRONMENTS:-}"
 missing_smoke="${MISSING_SMOKE:-}"
 missing_full="${MISSING_FULL:-}"
+missing_post_install="${MISSING_POST_INSTALL:-}"
 env_dirs_var="${ENVIRONMENT_DIRS:-}"
 pixi_manifest_path="${PIXI_MANIFEST_PATH:-}"
 pixi_metadata_helper="${PIXI_METADATA_HELPER:-}"
@@ -28,6 +29,11 @@ fi
 
 if [[ -n "${missing_full// }" ]]; then
   echo "[validate_env] Missing full-tests.sh for: ${missing_full}" >&2
+  fail=true
+fi
+
+if [[ -n "${missing_post_install// }" ]]; then
+  echo "[validate_env] Missing post-install.sh for: ${missing_post_install}" >&2
   fail=true
 fi
 
@@ -129,6 +135,11 @@ for env_dir in "${env_dirs[@]}"; do
 
   if [[ ! -f "${env_dir}/full-tests.sh" ]]; then
     echo "[validate_env] '${env_name}' is missing full-tests.sh at ${env_dir}/full-tests.sh" >&2
+    fail=true
+  fi
+
+  if [[ ! -f "${env_dir}/post-install.sh" ]]; then
+    echo "[validate_env] '${env_name}' is missing post-install.sh at ${env_dir}/post-install.sh" >&2
     fail=true
   fi
 done

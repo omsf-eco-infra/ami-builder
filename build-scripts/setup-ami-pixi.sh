@@ -72,6 +72,7 @@ for env_dir in "${env_dirs[@]}"; do
   env_basename="$(basename "${env_dir}")"
   smoke_test="${env_dir}/smoke-tests.sh"
   full_test="${env_dir}/full-tests.sh"
+  post_install="${env_dir}/post-install.sh"
 
   if [[ ! -f "${smoke_test}" ]]; then
     echo "[setup_ami_pixi] Missing smoke-tests.sh for '${env_basename}' at ${smoke_test}" >&2
@@ -80,6 +81,11 @@ for env_dir in "${env_dirs[@]}"; do
 
   if [[ ! -f "${full_test}" ]]; then
     echo "[setup_ami_pixi] Missing full-tests.sh for '${env_basename}' at ${full_test}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${post_install}" ]]; then
+    echo "[setup_ami_pixi] Missing post-install.sh for '${env_basename}' at ${post_install}" >&2
     exit 1
   fi
 
