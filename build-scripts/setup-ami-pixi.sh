@@ -130,7 +130,7 @@ if [ -f /etc/profile.d/omsf-pixi.sh ]; then
   . /etc/profile.d/omsf-pixi.sh
 fi
 if command -v pixi >/dev/null 2>&1 && [ -n "${PIXI_DEFAULT_ENVIRONMENT:-}" ] && [ "${PIXI_IN_SHELL:-0}" != "1" ]; then
-  eval "$(pixi shell-hook -m "${OMSF_PIXI_WORKSPACE}" -e "${PIXI_DEFAULT_ENVIRONMENT}" --shell bash --as-is)"
+  eval "$(pixi shell-hook -m "${OMSF_PIXI_WORKSPACE}" -e "${PIXI_DEFAULT_ENVIRONMENT}" --shell bash --as-is --no-completions)"
 fi
 # <<< omsf pixi auto-activation <<<
 EOF
