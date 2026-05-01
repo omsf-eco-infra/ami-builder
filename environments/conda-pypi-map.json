@@ -1,6 +1,5 @@
 {
   "aria2": "aria2",
-  "cutlass": "nvidia-cutlass",
   "mkl": "mkl",
   "pytorch": "torch"
 }
