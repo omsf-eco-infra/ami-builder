@@ -158,6 +158,7 @@ source "docker" "this" {
     "ENV PIXI_DEFAULT_ENVIRONMENT=${local.default_environment}",
     "ENV OMSF_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
     "ENV PIXI_HOME=/root/.pixi-global",
+    "ENV CONDA_OVERRIDE_CUDA=12",
     "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
     "CMD [\"bash\", \"-l\"]",
   ], local.label_changes)
@@ -210,6 +211,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "environments/conda-pypi-map.json"
+    destination = "${local.remote_environment_root}/conda-pypi-map.json"
+  }
+
+  provisioner "file" {
     source      = "environments/pixi.lock"
     destination = "${local.remote_pixi_lock}"
   }
@@ -248,6 +254,7 @@ build {
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
       "BUILD_ENV=docker",
+      "CONDA_OVERRIDE_CUDA=12",
       "OMSF_PIXI_WORKSPACE=/root",
       "PIXI_HOME=/root/.pixi-global",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
@@ -277,6 +284,7 @@ build {
       environment_vars = [
         "PIXI_ENV_NAME=${provisioner.value}",
         "BUILD_ENV=docker",
+        "CONDA_OVERRIDE_CUDA=12",
         "OMSF_PIXI_WORKSPACE=/root",
         "PIXI_HOME=/root/.pixi-global",
         "KMP_AFFINITY=disabled",

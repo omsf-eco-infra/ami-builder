@@ -16,6 +16,7 @@ fi
 ENVIRONMENT_DIR_ROOT="${ENVIRONMENT_DIR_ROOT:-/tmp/environments}"
 workspace_root="${OMSF_PIXI_WORKSPACE:-$(resolve_target_home)}"
 pixi_home="${PIXI_HOME:-${workspace_root}/.pixi-global}"
+conda_override_cuda="${CONDA_OVERRIDE_CUDA:-12}"
 
 if [[ -z "${PIXI_ENV_NAME:-}" ]]; then
   echo "[ami_pixi_smoke_test] PIXI_ENV_NAME must be set" >&2
@@ -36,5 +37,6 @@ echo "[ami_pixi_smoke_test] Running '${smoke_test}' in pixi environment '${PIXI_
 run_as_target_user env \
   HOME="${target_home}" \
   PIXI_HOME="${pixi_home}" \
+  CONDA_OVERRIDE_CUDA="${conda_override_cuda}" \
   /usr/local/bin/pixi run -m "${workspace_root}" -e "${PIXI_ENV_NAME}" --as-is bash "${smoke_test}"
 echo "[ami_pixi_smoke_test] Smoke test finished."

@@ -384,7 +384,7 @@ jobs:
       image_tag: ${{ needs.build-docker.outputs.image_tag }}
       environment_name: ${{ matrix.environment.name }}
       full_test_script: ${{ matrix.environment.full_script }}
-      instance_type: ${{ needs.lock-environments.outputs.default_instance_type }}
+      instance_type: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE || needs.lock-environments.outputs.default_instance_type }}
       region: ${{ needs.lock-environments.outputs.aws_region }}
     secrets:
       docker_test_assume_role_arn: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}

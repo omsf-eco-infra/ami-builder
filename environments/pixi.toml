@@ -4,15 +4,20 @@ channels = ["conda-forge"]
 description = "Pixi workspace for image runtime and test environments"
 name = "omsf-image-environments"
 platforms = ["linux-64"]
+conda-pypi-map = { conda-forge = "conda-pypi-map.json" }
 version = "0.1.0"
 
 [tool.image-builder]
 image_name = "omsf"
 default_environment = "omsf"
-environments = ["omsf", "openfe"]
+environments = ["omsf", "openfe", "openfold3"]
 
 [system-requirements]
 cuda = "12"
+
+# Shared workaround dependencies
+[feature.workaround.dependencies]
+openff-packmol = "*"
 
 
 # OpenFE
@@ -22,24 +27,86 @@ openfe = "*"
 [feature.openfe-test]
 
 [environments.openfe]
-features = ["openfe"]
+features = ["workaround", "openfe"]
 solve-group = "openfe"
 no-default-feature = true
 
 [environments.openfe-test]
-features = ["openfe", "openfe-test"]
+features = ["workaround", "openfe", "openfe-test"]
 solve-group = "openfe"
+no-default-feature = true
+
+# OpenFold3
+[feature.openfold3.dependencies]
+python = ">=3.10,<3.14"
+cuda-version = "12.*"
+awscli = "*"
+awscrt = "*"
+pytorch-gpu = "*"
+pytorch-lightning = ">=2.1"
+numpy = "*"
+pandas = "*"
+pyyaml = "*"
+requests = "*"
+scipy = "*"
+tqdm = "*"
+typing-extensions = "*"
+wandb = "*"
+ml-collections = "*"
+mkl = "*"
+aria2 = "*"
+biotite = "*"
+rdkit = "*"
+boto3 = "*"
+memory_profiler = "*"
+func_timeout = "*"
+lmdb = "*"
+ijson = "*"
+deepspeed = "*"
+pdbeccdutils = "*"
+cuda-python = "<12.9.1"
+cutlass = "<4"
+
+[feature.openfold3.pypi-dependencies]
+openfold3 = ">=0.4"
+
+[feature.openfold3.pypi-options.dependency-overrides]
+cuda-bindings = "==12.9.0"
+sympy = "==1.14.0"
+triton = "==3.6.0"
+
+[feature.openfold3.system-requirements]
+cuda = "12"
+
+[feature.openfold3-test.dependencies]
+pytest = "*"
+pytest-xdist = "*"
+pytest-cov = "*"
+pytest-benchmark = "*"
+pytest-regressions = "*"
+pytest-recording = "*"
+ruff = "*"
+debugpy = "*"
+
+[environments.openfold3]
+features = ["workaround", "openfold3"]
+solve-group = "openfold3"
+no-default-feature = true
+
+[environments.openfold3-test]
+features = ["workaround", "openfold3", "openfold3-test"]
+solve-group = "openfold3"
 no-default-feature = true
 
 # OMSF
 [environments.omsf]
-features = ["openfe"]
+features = ["workaround", "openfe", "openfold3"]
 solve-group = "omsf"
 no-default-feature = true
 
 [environments.omsf-test]
 features = [
-  "openfe", "openfe-test",
+  "workaround", "openfe", "openfe-test", "openfold3", "openfold3-test",
 ]
 solve-group = "omsf"
 no-default-feature = true
