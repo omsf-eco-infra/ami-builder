@@ -56,6 +56,17 @@ variable "additional_tags" {
   default     = "{}"
 }
 
+variable "openfold_cuda_arch_list" {
+  description = "CUDA compute capability list for precompiled OpenFold kernels; this is a CUDA arch list, not an EC2 instance-type list."
+  type        = string
+  default     = "8.6"
+
+  validation {
+    condition     = length(trimspace(var.openfold_cuda_arch_list)) > 0 && can(regex("^[0-9.]+(\\+PTX)?(;[0-9.]+(\\+PTX)?)*$", trimspace(var.openfold_cuda_arch_list)))
+    error_message = "The openfold_cuda_arch_list must be a semicolon-separated CUDA compute capability list such as 8.6, 8.6+PTX, or 7.5;8.6."
+  }
+}
+
 locals {
   ami_base_name        = trimspace(var.ami_name)
   ami_name_suffix      = trimspace(var.ami_name_suffix)
@@ -112,11 +123,12 @@ locals {
   environments_label = length(local.enabled_environment_names) > 0 ? join(", ", local.enabled_environment_names) : "none"
 
   build_metadata = {
-    ami_base_name        = local.ami_base_name
-    ami_base_with_suffix = local.ami_base_with_suffix
-    ami_name             = local.ami_name
-    default_environment  = local.default_environment
-    environments_label   = local.environments_label
+    ami_base_name           = local.ami_base_name
+    ami_base_with_suffix    = local.ami_base_with_suffix
+    ami_name                = local.ami_name
+    default_environment     = local.default_environment
+    environments_label      = local.environments_label
+    openfold_cuda_arch_list = trimspace(var.openfold_cuda_arch_list)
   }
 
   remote_environment_root = "/tmp/environments"
@@ -296,6 +308,7 @@ build {
       environment_vars = [
         "PIXI_ENV_NAME=${provisioner.value}",
         "CONDA_OVERRIDE_CUDA=12",
+        "OPENFOLD_CUDA_ARCH_LIST=${var.openfold_cuda_arch_list}",
         "OMSF_PIXI_WORKSPACE=/home/ubuntu",
         "PIXI_HOME=/home/ubuntu/.pixi-global",
       ]

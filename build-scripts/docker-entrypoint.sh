@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f /etc/profile.d/omsf-openfold3.sh ]]; then
+  # shellcheck source=/etc/profile.d/omsf-openfold3.sh
+  source /etc/profile.d/omsf-openfold3.sh
+fi
+
 if [[ -n "${PIXI_DEFAULT_ENVIRONMENT:-}" ]]; then
   workspace="${OMSF_PIXI_WORKSPACE:-${HOME}}"
   if [[ -f "${workspace}/pixi.toml" ]]; then
