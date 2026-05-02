@@ -68,7 +68,6 @@ cuda-python = "<12.9.1"
 [feature.openfold3.pypi-dependencies]
 openfold3 = ">=0.4"
 lmdb = "*"
-ninja = "*"
 nvidia-cutlass = "<4"
 
 [feature.openfold3.pypi-options.dependency-overrides]
