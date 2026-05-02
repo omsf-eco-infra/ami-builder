@@ -34,10 +34,12 @@ if [[ -z "${CONDA_PREFIX:-}" ]]; then
   exit 1
 fi
 
-# CUDA architecture list, not an EC2 instance-type list. Default targets AWS g5
-# A10G/Ampere GPUs; add future compute capabilities here or via Packer vars.
-export OPENFOLD_CUDA_ARCH_LIST="${OPENFOLD_CUDA_ARCH_LIST:-8.6}"
+# CUDA architecture list, not an EC2 instance-type list. Default targets the
+# common modern AWS GPU families we use: A100 (8.0), A10G (8.6), L4/L40S (8.9),
+# and H100 (9.0). Override via Packer vars or runtime env when needed.
+export OPENFOLD_CUDA_ARCH_LIST="${OPENFOLD_CUDA_ARCH_LIST:-8.0;8.6;8.9;9.0}"
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-${OPENFOLD_CUDA_ARCH_LIST}}"
+export DS_ACCELERATOR="${DS_ACCELERATOR:-cuda}"
 export DS_IGNORE_CUDA_DETECTION="${DS_IGNORE_CUDA_DETECTION:-TRUE}"
 export CUDA_HOME="${CUDA_HOME:-${CONDA_PREFIX}}"
 export LIBRARY_PATH="${CONDA_PREFIX}/lib${LIBRARY_PATH:+:${LIBRARY_PATH}}"
@@ -112,6 +114,7 @@ export CC="${CC}"
 export CXX="${CXX}"
 export OPENFOLD_CUDA_ARCH_LIST="\${OPENFOLD_CUDA_ARCH_LIST:-${OPENFOLD_CUDA_ARCH_LIST}}"
 export TORCH_CUDA_ARCH_LIST="\${TORCH_CUDA_ARCH_LIST:-\${OPENFOLD_CUDA_ARCH_LIST}}"
+export DS_ACCELERATOR="\${DS_ACCELERATOR:-${DS_ACCELERATOR}}"
 export DS_IGNORE_CUDA_DETECTION="\${DS_IGNORE_CUDA_DETECTION:-${DS_IGNORE_CUDA_DETECTION}}"
 if [ -z "\${CUTLASS_PATH:-}" ] || [ "\${CUTLASS_PATH}" = "DS_USE_CUTLASS_PYTHON_BINDINGS" ]; then
   export CUTLASS_PATH="${CUTLASS_PATH}"

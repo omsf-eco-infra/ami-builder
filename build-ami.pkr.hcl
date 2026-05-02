@@ -59,7 +59,7 @@ variable "additional_tags" {
 variable "openfold_cuda_arch_list" {
   description = "CUDA compute capability list for precompiled OpenFold kernels; this is a CUDA arch list, not an EC2 instance-type list."
   type        = string
-  default     = "8.6"
+  default     = "8.0;8.6;8.9;9.0"
 
   validation {
     condition     = length(trimspace(var.openfold_cuda_arch_list)) > 0 && can(regex("^[0-9.]+(\\+PTX)?(;[0-9.]+(\\+PTX)?)*$", trimspace(var.openfold_cuda_arch_list)))
