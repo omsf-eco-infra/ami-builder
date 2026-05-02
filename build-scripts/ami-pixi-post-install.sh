@@ -34,7 +34,7 @@ if [[ ! -f "${post_install_script}" ]]; then
 fi
 
 echo "[ami_pixi_post_install] Running '${post_install_script}' in pixi environment '${PIXI_ENV_NAME}'"
-env \
+run_as_target_user env \
   HOME="${target_home}" \
   PIXI_HOME="${pixi_home}" \
   CONDA_OVERRIDE_CUDA="${conda_override_cuda}" \
