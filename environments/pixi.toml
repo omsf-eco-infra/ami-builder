@@ -64,7 +64,7 @@ ijson = "*"
 deepspeed = "*"
 pdbeccdutils = "*"
 cuda-python = "<12.9.1"
-libcusparse-dev = "*"
+cuda-libraries-dev = "*"
 
 [feature.openfold3.pypi-dependencies]
 openfold3 = ">=0.4"
