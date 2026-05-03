@@ -88,6 +88,11 @@ locals {
     basename(dirname(path)) => path
   }
 
+  environment_post_install_scripts = {
+    for path in fileset(path.root, "environments/*/post-install.sh") :
+    basename(dirname(path)) => path
+  }
+
   available_environment_paths = {
     for env in sort(distinct(concat(
       keys(local.environment_smoke_scripts),
@@ -111,6 +116,11 @@ locals {
   missing_full_scripts = [
     for env in local.enabled_environment_names : env
     if length(trimspace(lookup(local.environment_full_scripts, env, ""))) == 0
+  ]
+
+  missing_post_install_scripts = [
+    for env in local.enabled_environment_names : env
+    if length(trimspace(lookup(local.environment_post_install_scripts, env, ""))) == 0
   ]
 
   default_environment = trimspace(var.default_environment)
@@ -158,7 +168,11 @@ source "docker" "this" {
     "ENV PIXI_DEFAULT_ENVIRONMENT=${local.default_environment}",
     "ENV OMSF_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
     "ENV PIXI_HOME=/root/.pixi-global",
+    "ENV CC=/usr/bin/gcc",
+    "ENV CXX=/usr/bin/g++",
     "ENV CONDA_OVERRIDE_CUDA=12",
+    "ENV OPENFOLD_CACHE=/opt/openfold3",
+    "ENV OPENFOLD_PARAMETER_DIR=/opt/openfold3/checkpoints",
     "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
     "CMD [\"bash\", \"-l\"]",
   ], local.label_changes)
@@ -177,7 +191,7 @@ build {
       "export DEBIAN_FRONTEND=noninteractive",
       "export TZ=Etc/UTC",
       "apt-get update",
-      "apt-get install -y --no-install-recommends curl bzip2 ca-certificates python3",
+      "apt-get install -y --no-install-recommends build-essential curl bzip2 ca-certificates python3",
       "rm -rf /var/lib/apt/lists/*",
     ]
   }
@@ -241,6 +255,7 @@ build {
       "MISSING_ENVIRONMENTS=${join(" ", local.missing_environment_names)}",
       "MISSING_SMOKE=${join(" ", local.missing_smoke_scripts)}",
       "MISSING_FULL=${join(" ", local.missing_full_scripts)}",
+      "MISSING_POST_INSTALL=${join(" ", local.missing_post_install_scripts)}",
       "ENVIRONMENT_DIRS=${local.environment_dirs_string}",
       "PIXI_MANIFEST_PATH=${local.remote_pixi_manifest}",
       "PIXI_METADATA_HELPER=${local.remote_pixi_helper}",
@@ -259,6 +274,22 @@ build {
       "PIXI_HOME=/root/.pixi-global",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
     ]
+  }
+
+  dynamic "provisioner" {
+    for_each = local.enabled_environment_names
+    labels   = ["shell"]
+    content {
+      script = "build-scripts/ami-pixi-post-install.sh"
+      environment_vars = [
+        "PIXI_ENV_NAME=${provisioner.value}",
+        "BUILD_ENV=docker",
+        "CONDA_OVERRIDE_CUDA=12",
+        "OMSF_PIXI_WORKSPACE=/root",
+        "PIXI_HOME=/root/.pixi-global",
+      ]
+      execute_command = "chmod +x '{{ .Path }}'; {{ .Vars }} '{{ .Path }}' '${local.remote_environment_root}/${provisioner.value}/post-install.sh'"
+    }
   }
 
   # ── Install entrypoint ─────────────────────────────────────────────

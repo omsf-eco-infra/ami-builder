@@ -60,15 +60,16 @@ rdkit = "*"
 boto3 = "*"
 memory_profiler = "*"
 func_timeout = "*"
-lmdb = "*"
 ijson = "*"
 deepspeed = "*"
 pdbeccdutils = "*"
 cuda-python = "<12.9.1"
-cutlass = "<4"
+cuda-libraries-dev = "*"
 
 [feature.openfold3.pypi-dependencies]
 openfold3 = ">=0.4"
+lmdb = "*"
+nvidia-cutlass = "<4"
 
 [feature.openfold3.pypi-options.dependency-overrides]
 cuda-bindings = "==12.9.0"

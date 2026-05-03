@@ -240,6 +240,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
+          role-duration-seconds: 7200
           aws-region: ${{ needs.lock-environments.outputs.aws_region }}
 
       - name: Set up Packer
