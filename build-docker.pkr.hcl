@@ -177,7 +177,7 @@ build {
       "export DEBIAN_FRONTEND=noninteractive",
       "export TZ=Etc/UTC",
       "apt-get update",
-      "apt-get install -y --no-install-recommends curl bzip2 ca-certificates python3",
+      "apt-get install -y --no-install-recommends curl bzip2 ca-certificates python3 unzip",
       "rm -rf /var/lib/apt/lists/*",
     ]
   }

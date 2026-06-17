@@ -188,7 +188,7 @@ build {
       "echo '[install base] Installing prerequisite packages'",
       "set -euxo pipefail",
       "sudo apt-get update",
-      "sudo apt-get install -y curl bzip2 ca-certificates python3",
+      "sudo apt-get install -y curl bzip2 ca-certificates python3 unzip",
     ]
   }
 
