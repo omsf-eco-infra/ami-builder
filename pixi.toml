@@ -9,6 +9,7 @@ version = "0.1.0"
 [tasks]
 build-ami = "packer init build-ami.pkr.hcl && packer build -var 'ami_name=omsf' -var 'default_environment=openfe' -var 'environments=[\"omsf\"]' build-ami.pkr.hcl"
 build-docker = "packer init build-docker.pkr.hcl && packer build -var 'ami_name=omsf' -var 'default_environment=openfe' -var 'environments=[\"omsf\"]' -var \"build_timestamp=$(date +%s)\" build-docker.pkr.hcl"
+build-docker-and-singularity = "packer init build-docker.pkr.hcl && packer build -var 'ami_name=omsf' -var 'default_environment=openfe' -var 'environments=[\"omsf\"]' -var 'build_singularity=true' -var \"build_timestamp=$(date +%s)\" build-docker.pkr.hcl"
 
 [dependencies]
 python = "*"

@@ -4,6 +4,9 @@
 packer-manifest.json
 packer-docker-manifest.json
 
+# Locally generated Singularity/Apptainer images
+artifacts/
+
 # .tfstate files
 *.tfstate
 *.tfstate.*

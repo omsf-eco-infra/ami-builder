@@ -19,6 +19,23 @@ variable "docker_repository" {
   default     = "ghcr.io/omsf-eco-infra/omsf"
 }
 
+variable "build_singularity" {
+  description = "Create a Singularity Image Format (SIF) image from the tagged Docker image. Requires Apptainer or Singularity on the Packer host."
+  type        = bool
+  default     = false
+}
+
+variable "singularity_output_directory" {
+  description = "Directory where the generated SIF image and checksum are written."
+  type        = string
+  default     = "artifacts"
+
+  validation {
+    condition     = length(trimspace(var.singularity_output_directory)) > 0
+    error_message = "The singularity_output_directory must be a non-empty path."
+  }
+}
+
 variable "ami_name" {
   description = "Logical name for the Docker image variant (matches AMI naming)."
   type        = string
@@ -124,6 +141,8 @@ locals {
     default_environment  = local.default_environment
     environments_label   = local.environments_label
     docker_tags          = jsonencode(local.tag_list)
+    docker_image         = local.docker_image
+    singularity_image    = var.build_singularity ? local.singularity_output_path : ""
   }
 
   remote_environment_root = "/tmp/environments"
@@ -146,6 +165,9 @@ locals {
 
   primary_tag = "${local.ami_base_with_suffix}-${var.build_timestamp}"
   tag_list    = [local.primary_tag]
+
+  docker_image               = "${var.docker_repository}:${local.primary_tag}"
+  singularity_output_path    = "${trimspace(var.singularity_output_directory)}/${local.primary_tag}.sif"
 
   label_changes = [for key, value in local.merged_labels : "LABEL ${key}=${jsonencode(value)}"]
 }
@@ -309,9 +331,27 @@ build {
   }
 
   # ── Post-processors ───────────────────────────────────────────────
-  post-processor "docker-tag" {
-    repository = var.docker_repository
-    tags       = local.tag_list
+  post-processors {
+    post-processor "docker-tag" {
+      repository = var.docker_repository
+      tags       = local.tag_list
+    }
+
+    # The conversion must be chained after docker-tag so docker-daemon can
+    # resolve the final repository:tag rather than Packer's temporary image.
+    post-processor "shell-local" {
+      script = "build-scripts/build-singularity-image.sh"
+      environment_vars = [
+        "BUILD_SINGULARITY=${var.build_singularity}",
+        "DOCKER_IMAGE=${local.docker_image}",
+        "SINGULARITY_IMAGE=${local.singularity_output_path}",
+      ]
+      execute_command = [
+        "/bin/sh",
+        "-c",
+        "{{.Vars}} /usr/bin/env bash {{.Script}}",
+      ]
+    }
   }
 
   post-processor "manifest" {
