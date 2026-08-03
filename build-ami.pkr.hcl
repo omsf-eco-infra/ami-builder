@@ -129,8 +129,9 @@ locals {
 }
 
 source "amazon-ebs" "this" {
-  region        = var.aws_region
-  instance_type = "t3.large"
+  region            = var.aws_region
+  instance_type     = "t3.large"
+  shutdown_behavior = "terminate"
 
   source_ami_filter {
     filters = {
@@ -169,11 +170,10 @@ source "amazon-ebs" "this" {
     max_attempts = 2000
   }
 
-  run_tags = {
-    Name         = "ami-builder-${local.ami_base_with_suffix}"
-    template     = local.ami_base_with_suffix
-    environments = local.environments_label
-  }
+  run_tags = merge(local.merged_tags, {
+    Name     = "ami-builder-${local.ami_base_with_suffix}"
+    template = local.ami_base_with_suffix
+  })
 
   tags = local.merged_tags
 }
