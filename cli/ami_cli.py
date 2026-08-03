@@ -7,6 +7,7 @@ import botocore
 import click
 
 MANAGED_BY_VALUE = "omsf-ami-builder"
+# Must match build-ami.pkr.hcl `run_tags.Name` prefix.
 FAILED_BUILD_NAME_PREFIX = "ami-builder-"
 
 
@@ -358,7 +359,7 @@ def auto_delete(force):
     if not force:
         click.confirm("Proceed with deletion?", abort=True)
 
-    for _, image in targets:
+    for _, image in sorted(targets, key=lambda item: item[0]):
         if is_failed_build_image(image):
             tags = tags_to_dict(image)
             click.echo(
