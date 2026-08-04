@@ -1,0 +1,266 @@
+name: Reusable container environment test
+
+on:
+  workflow_call:
+    inputs:
+      container_runtime:
+        description: Container runtime to test (docker or apptainer).
+        required: true
+        type: string
+      image_repo:
+        description: OCI repository containing the image to test.
+        required: true
+        type: string
+      image_tag:
+        description: Image tag to test.
+        required: true
+        type: string
+      environment_name:
+        description: Logical runtime environment name to validate.
+        required: true
+        type: string
+      full_test_script:
+        description: Repository-relative path to the full test script.
+        required: true
+        type: string
+      instance_type:
+        description: EC2 instance type to use for the self-hosted container test runner.
+        required: false
+        type: string
+        default: g5.xlarge
+      region:
+        description: AWS region to use for runner lifecycle API calls.
+        required: false
+        type: string
+        default: us-east-1
+    secrets:
+      docker_test_assume_role_arn:
+        required: true
+      gh_pat:
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_GHA_RUNNER_HOME_DIR: /home/ubuntu
+  AWS_GHA_RUNNER_IMAGE_ID: ${{ vars.AWS_DOCKER_GHA_RUNNER_IMAGE_ID }}
+  AWS_GHA_RUNNER_ROOT_DEVICE_SIZE: ${{ vars.AWS_DOCKER_GHA_RUNNER_ROOT_DEVICE_SIZE }}
+
+jobs:
+  start-runner:
+    name: Start ${{ inputs.container_runtime }} test runner
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      mapping: ${{ steps.aws-start.outputs.mapping }}
+      instances: ${{ steps.aws-start.outputs.instances }}
+    steps:
+      - name: Validate runner configuration
+        run: |
+          set -euo pipefail
+          case "${CONTAINER_RUNTIME}" in
+            docker|apptainer) ;;
+            *)
+              echo "container_runtime must be docker or apptainer, got: ${CONTAINER_RUNTIME}" >&2
+              exit 2
+              ;;
+          esac
+          : "${AWS_GHA_RUNNER_IMAGE_ID:?Repository variable AWS_DOCKER_GHA_RUNNER_IMAGE_ID is required}"
+          : "${RUNNER_INSTANCE_TYPE:?Runner instance type must be set}"
+        env:
+          CONTAINER_RUNTIME: ${{ inputs.container_runtime }}
+          RUNNER_INSTANCE_TYPE: ${{ inputs.instance_type }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.docker_test_assume_role_arn }}
+          role-session-name: gha-start-container-test-runner
+          aws-region: ${{ inputs.region }}
+
+      - name: Start runner
+        id: aws-start
+        uses: omsf/start-aws-gha-runner@v1.0.0
+        with:
+          aws_home_dir: ${{ env.AWS_GHA_RUNNER_HOME_DIR }}
+          aws_image_id: ${{ env.AWS_GHA_RUNNER_IMAGE_ID }}
+          aws_instance_type: ${{ inputs.instance_type }}
+          aws_region_name: ${{ inputs.region }}
+          aws_root_device_size: ${{ env.AWS_GHA_RUNNER_ROOT_DEVICE_SIZE }}
+        env:
+          GH_PAT: ${{ secrets.gh_pat }}
+
+  test:
+    name: Run ${{ inputs.container_runtime }} test
+    needs: start-runner
+    if: ${{ inputs.image_repo != '' && inputs.image_tag != '' && needs.start-runner.outputs.instances != '' }}
+    runs-on: ${{ fromJson(needs.start-runner.outputs.instances) }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Ensure Docker is installed
+        if: ${{ inputs.container_runtime == 'docker' }}
+        run: |
+          set -euo pipefail
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y docker.io
+          fi
+          docker --version
+
+      - name: Install Apptainer
+        if: ${{ inputs.container_runtime == 'apptainer' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
+          apptainer version
+
+      - name: Log in to GHCR with Docker
+        if: ${{ inputs.container_runtime == 'docker' }}
+        run: echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Log in to GHCR with Apptainer
+        if: ${{ inputs.container_runtime == 'apptainer' }}
+        run: |
+          set -euo pipefail
+          authfile="${RUNNER_TEMP}/apptainer-auth.json"
+          echo "${GH_TOKEN}" | apptainer registry login \
+            --authfile "${authfile}" \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin \
+            oras://ghcr.io
+          echo "APPTAINER_AUTHFILE=${authfile}" >> "${GITHUB_ENV}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Pull Docker image
+        if: ${{ inputs.container_runtime == 'docker' }}
+        run: docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+
+      - name: Pull SIF image
+        if: ${{ inputs.container_runtime == 'apptainer' }}
+        run: |
+          set -euo pipefail
+          apptainer pull \
+            --disable-cache \
+            --force \
+            "${SIF_PATH}" \
+            "oras://${IMAGE_REPO}:${IMAGE_TAG}"
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          SIF_PATH: ${{ runner.temp }}/omsf.sif
+
+      - name: Verify host GPU runtime
+        run: |
+          set -euo pipefail
+          if ! command -v nvidia-smi >/dev/null 2>&1; then
+            echo "[test] nvidia-smi is not available on the container test runner" >&2
+            exit 1
+          fi
+          nvidia-smi -L
+
+      - name: Verify Docker GPU runtime
+        if: ${{ inputs.container_runtime == 'docker' }}
+        run: |
+          set -euo pipefail
+          docker run --rm --gpus all \
+            -e "NVIDIA_VISIBLE_DEVICES=all" \
+            -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility" \
+            "${IMAGE_REPO}:${IMAGE_TAG}" \
+            nvidia-smi -L
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+
+      - name: Verify SIF GPU runtime
+        if: ${{ inputs.container_runtime == 'apptainer' }}
+        run: apptainer exec --cleanenv --nv "${SIF_PATH}" nvidia-smi -L
+        env:
+          SIF_PATH: ${{ runner.temp }}/omsf.sif
+
+      - name: Run Docker full tests
+        if: ${{ inputs.container_runtime == 'docker' }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[test] Invalid environment name: ${ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
+          script_path="${FULL_TEST_SCRIPT#/}"
+          docker run --rm --gpus all \
+            -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            -e "CONDA_OVERRIDE_CUDA=12" \
+            -e "NVIDIA_VISIBLE_DEVICES=all" \
+            -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility" \
+            "${IMAGE_REPO}:${IMAGE_TAG}" \
+            bash "/opt/omsf/${script_path}"
+        env:
+          IMAGE_REPO: ${{ inputs.image_repo }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          FULL_TEST_SCRIPT: ${{ inputs.full_test_script }}
+
+      - name: Run SIF full tests
+        if: ${{ inputs.container_runtime == 'apptainer' }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${ENVIRONMENT_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+            echo "[test] Invalid environment name: ${ENVIRONMENT_NAME}" >&2
+            exit 1
+          fi
+
+          script_path="${FULL_TEST_SCRIPT#/}"
+          apptainer exec \
+            --cleanenv \
+            --nv \
+            --env "OMSF_PIXI_WORKSPACE=/opt/omsf/workspace" \
+            --env "PIXI_HOME=/opt/omsf/pixi-home" \
+            --env "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            --env "CONDA_OVERRIDE_CUDA=12" \
+            "${SIF_PATH}" \
+            /usr/local/bin/omsf-entrypoint.sh \
+            bash "/opt/omsf/${script_path}"
+        env:
+          ENVIRONMENT_NAME: ${{ inputs.environment_name }}
+          FULL_TEST_SCRIPT: ${{ inputs.full_test_script }}
+          SIF_PATH: ${{ runner.temp }}/omsf.sif
+
+  stop-runner:
+    name: Stop ${{ inputs.container_runtime }} test runner
+    needs: [start-runner, test]
+    if: ${{ always() && needs.start-runner.outputs.mapping != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.docker_test_assume_role_arn }}
+          role-session-name: gha-stop-container-test-runner
+          aws-region: ${{ inputs.region }}
+
+      - name: Stop runner
+        uses: omsf/stop-aws-gha-runner@v1.0.0
+        with:
+          instance_mapping: ${{ needs.start-runner.outputs.mapping }}
+          aws_region_name: ${{ inputs.region }}
+        env:
+          GH_PAT: ${{ secrets.gh_pat }}
