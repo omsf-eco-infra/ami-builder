@@ -38,7 +38,13 @@ def get_image_snapshot_ids(ec2, image_id):
     return snapshot_ids
 
 
-def create_managed_ami(ec2, name, delete_after=None, with_snapshot=True):
+def create_managed_ami(
+    ec2,
+    name,
+    delete_after=None,
+    with_snapshot=True,
+    tag_name=None,
+):
     block_mappings = []
 
     if with_snapshot:
@@ -59,6 +65,8 @@ def create_managed_ami(ec2, name, delete_after=None, with_snapshot=True):
         BlockDeviceMappings=block_mappings or None,
     )
     tags = [{"Key": "managed_by", "Value": ami_cli.MANAGED_BY_VALUE}]
+    if tag_name:
+        tags.append({"Key": "Name", "Value": tag_name})
     if delete_after:
         tags.append({"Key": "delete-after", "Value": delete_after})
     ec2.create_tags(Resources=[image["ImageId"]], Tags=tags)
@@ -98,6 +106,20 @@ def test_parse_delete_after_handles_blank_and_invalid():
 
 def test_parse_delete_after_parses_iso_date():
     assert ami_cli.parse_delete_after({"delete-after": "2024-01-15"}) == dt.date(2024, 1, 15)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("ami-builder-omsf-pr1", True),
+        ("omsf-pr1", False),
+        ("prefix-ami-builder-omsf", False),
+        (None, False),
+    ],
+)
+def test_is_failed_build_image_recognizes_builder_name_prefix(name, expected):
+    tags = [] if name is None else [{"Key": "Name", "Value": name}]
+    assert ami_cli.is_failed_build_image({"Tags": tags}) is expected
 
 
 def test_collect_snapshot_ids_handles_missing_data():
@@ -333,6 +355,77 @@ def test_auto_delete_removes_expired_amis_and_snapshots(monkeypatch):
 
     for snapshot_id in (*snap_one, *snap_two):
         assert_snapshot_missing(ec2, snapshot_id)
+
+
+@mock_aws
+def test_auto_delete_warns_for_expired_failed_build_and_deletes_snapshot(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: dt.date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+
+    failed_id, snapshot_ids = create_managed_ami(
+        ec2,
+        "omsf-pr1-20231201",
+        delete_after="2023-12-31",
+        tag_name="ami-builder-omsf-pr1-20231201",
+    )
+
+    result = CliRunner().invoke(ami_cli.cli, ["auto-delete", "--force"])
+
+    assert result.exit_code == 0
+    assert (
+        f"WARNING: Cleaning up AMI {failed_id} "
+        "(ami-builder-omsf-pr1-20231201) from a failed Packer build."
+    ) in result.output
+    assert failed_id not in {
+        image["ImageId"] for image in ec2.describe_images(Owners=["self"])["Images"]
+    }
+    for snapshot_id in snapshot_ids:
+        assert_snapshot_missing(ec2, snapshot_id)
+
+
+@mock_aws
+def test_auto_delete_does_not_warn_for_expired_completed_build(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: dt.date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+
+    completed_id, _ = create_managed_ami(
+        ec2,
+        "omsf-pr1-20231201",
+        delete_after="2023-12-31",
+        tag_name="omsf-pr1-20231201",
+    )
+
+    result = CliRunner().invoke(ami_cli.cli, ["auto-delete", "--force"])
+
+    assert result.exit_code == 0
+    assert "WARNING: Cleaning up AMI" not in result.output
+    assert completed_id not in {
+        image["ImageId"] for image in ec2.describe_images(Owners=["self"])["Images"]
+    }
+
+
+@mock_aws
+def test_auto_delete_retains_non_expired_failed_build(monkeypatch):
+    monkeypatch.setattr(ami_cli, "_utc_today", lambda: dt.date(2024, 1, 1))
+    ec2 = boto3.client("ec2", region_name="us-east-1")
+
+    failed_id, snapshot_ids = create_managed_ami(
+        ec2,
+        "omsf-pr1-20240101",
+        delete_after="2024-01-08",
+        tag_name="ami-builder-omsf-pr1-20240101",
+    )
+
+    result = CliRunner().invoke(ami_cli.cli, ["auto-delete", "--force"])
+
+    assert result.exit_code == 0
+    assert "No AMIs have expired delete-after dates." in result.output
+    assert "WARNING: Cleaning up AMI" not in result.output
+    assert failed_id in {
+        image["ImageId"] for image in ec2.describe_images(Owners=["self"])["Images"]
+    }
+    for snapshot_id in snapshot_ids:
+        assert_snapshot_exists(ec2, snapshot_id)
 
 
 @mock_aws

@@ -7,6 +7,8 @@ import botocore
 import click
 
 MANAGED_BY_VALUE = "omsf-ami-builder"
+# Must match build-ami.pkr.hcl `run_tags.Name` prefix.
+FAILED_BUILD_NAME_PREFIX = "ami-builder-"
 
 
 def tags_to_dict(resource):
@@ -32,6 +34,12 @@ def parse_delete_after(tags):
         return dt.date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def is_failed_build_image(image):
+    """Return whether an AMI retained Packer's temporary builder name tag."""
+    name = tags_to_dict(image).get("Name", "")
+    return name.startswith(FAILED_BUILD_NAME_PREFIX)
 
 
 def collect_snapshot_ids(image):
@@ -351,7 +359,14 @@ def auto_delete(force):
     if not force:
         click.confirm("Proceed with deletion?", abort=True)
 
-    for _, image in targets:
+    for _, image in sorted(targets, key=lambda item: item[0]):
+        if is_failed_build_image(image):
+            tags = tags_to_dict(image)
+            click.echo(
+                "WARNING: Cleaning up AMI "
+                f"{image['ImageId']} ({tags['Name']}) from a failed Packer build.",
+                err=True,
+            )
         delete_image(client, image, delete_snapshots=True)
 
 
