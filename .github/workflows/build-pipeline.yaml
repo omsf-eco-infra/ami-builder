@@ -361,22 +361,11 @@ jobs:
           sudo apt-get install -y apptainer
           apptainer version
 
-      - name: Log in to GHCR
-        run: |
-          set -euo pipefail
-          authfile="${RUNNER_TEMP}/apptainer-auth.json"
-          echo "${GH_TOKEN}" | apptainer registry login \
-            --authfile "${authfile}" \
-            --username "${GITHUB_ACTOR}" \
-            --password-stdin \
-            docker://ghcr.io
-          echo "APPTAINER_AUTHFILE=${authfile}" >> "${GITHUB_ENV}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Build and publish SIF image
         run: build-scripts/build-singularity-image.sh
         env:
+          APPTAINER_DOCKER_USERNAME: ${{ github.actor }}
+          APPTAINER_DOCKER_PASSWORD: ${{ github.token }}
           APPTAINER_TMPDIR: ${{ runner.temp }}/apptainer-tmp
           DOCKER_IMAGE: ${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}
           SIF_IMAGE: ${{ env.SIF_REPOSITORY }}:${{ needs.build-docker.outputs.image_tag }}
@@ -434,7 +423,7 @@ jobs:
       fail-fast: false
       matrix:
         environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
-    uses: ./.github/workflows/test-container-reusable.yml
+    uses: ./.github/workflows/test-docker-reusable.yml
     with:
       container_runtime: docker
       image_repo: ${{ needs.build-docker.outputs.image_repo }}
@@ -460,7 +449,7 @@ jobs:
       fail-fast: false
       matrix:
         environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
-    uses: ./.github/workflows/test-container-reusable.yml
+    uses: ./.github/workflows/test-docker-reusable.yml
     with:
       container_runtime: apptainer
       image_repo: ${{ needs.build-sif.outputs.image_repo }}

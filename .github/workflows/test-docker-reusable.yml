@@ -130,20 +130,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Log in to GHCR with Apptainer
-        if: ${{ inputs.container_runtime == 'apptainer' }}
-        run: |
-          set -euo pipefail
-          authfile="${RUNNER_TEMP}/apptainer-auth.json"
-          echo "${GH_TOKEN}" | apptainer registry login \
-            --authfile "${authfile}" \
-            --username "${GITHUB_ACTOR}" \
-            --password-stdin \
-            oras://ghcr.io
-          echo "APPTAINER_AUTHFILE=${authfile}" >> "${GITHUB_ENV}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Pull Docker image
         if: ${{ inputs.container_runtime == 'docker' }}
         run: docker pull "${IMAGE_REPO}:${IMAGE_TAG}"
@@ -161,6 +147,8 @@ jobs:
             "${SIF_PATH}" \
             "oras://${IMAGE_REPO}:${IMAGE_TAG}"
         env:
+          APPTAINER_DOCKER_USERNAME: ${{ github.actor }}
+          APPTAINER_DOCKER_PASSWORD: ${{ github.token }}
           IMAGE_REPO: ${{ inputs.image_repo }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           SIF_PATH: ${{ runner.temp }}/omsf.sif
