@@ -192,7 +192,7 @@ jobs:
 
           script_path="${FULL_TEST_SCRIPT#/}"
           docker run --rm --gpus all \
-            -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            -e "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}" \
             -e "CONDA_OVERRIDE_CUDA=12" \
             -e "NVIDIA_VISIBLE_DEVICES=all" \
             -e "NVIDIA_DRIVER_CAPABILITIES=compute,utility" \
@@ -219,7 +219,7 @@ jobs:
             --nv \
             --env "OMSF_PIXI_WORKSPACE=/opt/omsf/workspace" \
             --env "PIXI_HOME=/opt/omsf/pixi-home" \
-            --env "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}-test" \
+            --env "PIXI_DEFAULT_ENVIRONMENT=${ENVIRONMENT_NAME}" \
             --env "CONDA_OVERRIDE_CUDA=12" \
             "${SIF_PATH}" \
             /usr/local/bin/omsf-entrypoint.sh \
