@@ -242,6 +242,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
           aws-region: ${{ needs.lock-environments.outputs.aws_region }}
+          role-duration-seconds: 7200
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
