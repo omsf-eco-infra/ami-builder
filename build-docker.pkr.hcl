@@ -124,9 +124,10 @@ locals {
     default_environment  = local.default_environment
     environments_label   = local.environments_label
     docker_tags          = jsonencode(local.tag_list)
+    docker_image         = local.docker_image
   }
 
-  remote_environment_root = "/tmp/environments"
+  remote_environment_root = "/opt/omsf/environments"
   remote_pixi_manifest    = "${local.remote_environment_root}/pixi.toml"
   remote_pixi_lock        = "${local.remote_environment_root}/pixi.lock"
   remote_pixi_helper      = "${local.remote_environment_root}/pixi-environment-metadata.py"
@@ -147,6 +148,8 @@ locals {
   primary_tag = "${local.ami_base_with_suffix}-${var.build_timestamp}"
   tag_list    = [local.primary_tag]
 
+  docker_image = "${var.docker_repository}:${local.primary_tag}"
+
   label_changes = [for key, value in local.merged_labels : "LABEL ${key}=${jsonencode(value)}"]
 }
 
@@ -154,10 +157,10 @@ source "docker" "this" {
   image  = var.docker_base_image
   commit = true
   changes = concat([
-    "ENV OMSF_PIXI_WORKSPACE=/root",
+    "ENV OMSF_PIXI_WORKSPACE=/opt/omsf/workspace",
     "ENV PIXI_DEFAULT_ENVIRONMENT=${local.default_environment}",
     "ENV OMSF_ENVIRONMENTS=\"${join(" ", local.enabled_environment_names)}\"",
-    "ENV PIXI_HOME=/root/.pixi-global",
+    "ENV PIXI_HOME=/opt/omsf/pixi-home",
     "ENV CONDA_OVERRIDE_CUDA=12",
     "ENTRYPOINT [\"/usr/local/bin/omsf-entrypoint.sh\"]",
     "CMD [\"bash\", \"-l\"]",
@@ -192,6 +195,7 @@ build {
     script = "build-scripts/install-pixi.sh"
     environment_vars = [
       "BUILD_ENV=docker",
+      "PIXI_HOME=/opt/omsf/pixi-home",
     ]
   }
 
@@ -255,8 +259,8 @@ build {
       "DEFAULT_ENVIRONMENT=${local.default_environment}",
       "BUILD_ENV=docker",
       "CONDA_OVERRIDE_CUDA=12",
-      "OMSF_PIXI_WORKSPACE=/root",
-      "PIXI_HOME=/root/.pixi-global",
+      "OMSF_PIXI_WORKSPACE=/opt/omsf/workspace",
+      "PIXI_HOME=/opt/omsf/pixi-home",
       "PIXI_MANIFEST_SOURCE=${local.remote_pixi_manifest}",
     ]
   }
@@ -285,8 +289,8 @@ build {
         "PIXI_ENV_NAME=${provisioner.value}",
         "BUILD_ENV=docker",
         "CONDA_OVERRIDE_CUDA=12",
-        "OMSF_PIXI_WORKSPACE=/root",
-        "PIXI_HOME=/root/.pixi-global",
+        "OMSF_PIXI_WORKSPACE=/opt/omsf/workspace",
+        "PIXI_HOME=/opt/omsf/pixi-home",
         "KMP_AFFINITY=disabled",
         "OMP_NUM_THREADS=1",
         "OMP_PROC_BIND=false",
@@ -297,13 +301,15 @@ build {
   }
 
   # ── Cleanup ────────────────────────────────────────────────────────
-  # Keep /tmp/environments (test scripts are needed at container runtime).
-  # The pixi.toml/pixi.lock duplication with /root is trivial.
+  # Keep /opt/omsf/environments because the full-test scripts are used at
+  # container runtime. Make the installed workspace readable and executable by
+  # unprivileged Apptainer users while retaining root ownership.
   provisioner "shell" {
     inline_shebang = "/usr/bin/env bash"
     inline = [
       "set -euxo pipefail",
       "/usr/local/bin/pixi clean cache -y --no-progress || true",
+      "chmod -R a+rX /opt/omsf",
       "rm -rf /var/lib/apt/lists/*",
     ]
   }

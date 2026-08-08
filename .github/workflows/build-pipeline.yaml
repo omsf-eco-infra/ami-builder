@@ -18,6 +18,7 @@ env:
   AWS_REGION: us-east-1
   DEFAULT_INSTANCE_TYPE: g5.xlarge
   DOCKER_REPOSITORY: ghcr.io/omsf-eco-infra/omsf
+  SIF_REPOSITORY: ghcr.io/omsf-eco-infra/omsf-sif
 
 jobs:
   # ── Step 1: Prepare shared build inputs ────────────────────────────
@@ -241,6 +242,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN }}
           role-session-name: gha-ami-builder
           aws-region: ${{ needs.lock-environments.outputs.aws_region }}
+          role-duration-seconds: 7200
 
       - name: Set up Packer
         uses: hashicorp/setup-packer@v3
@@ -335,6 +337,50 @@ jobs:
           kind: docker
           image_repo: ${{ needs.lock-environments.outputs.docker_repository }}
 
+  # ── Step 2c: Build and publish SIF image ────────────────────────────
+  build-sif:
+    name: Build SIF Image
+    needs: build-docker
+    if: ${{ needs.build-docker.outputs.image_repo != '' && needs.build-docker.outputs.image_tag != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_repo: ${{ steps.metadata.outputs.image_repo }}
+      image_tag: ${{ steps.metadata.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Apptainer
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
+          apptainer version
+
+      - name: Build and publish SIF image
+        run: build-scripts/build-singularity-image.sh
+        env:
+          APPTAINER_DOCKER_USERNAME: ${{ github.actor }}
+          APPTAINER_DOCKER_PASSWORD: ${{ github.token }}
+          APPTAINER_TMPDIR: ${{ runner.temp }}/apptainer-tmp
+          DOCKER_IMAGE: ${{ needs.build-docker.outputs.image_repo }}:${{ needs.build-docker.outputs.image_tag }}
+          SIF_IMAGE: ${{ env.SIF_REPOSITORY }}:${{ needs.build-docker.outputs.image_tag }}
+          SIF_OUTPUT: ${{ runner.temp }}/${{ needs.build-docker.outputs.image_tag }}.sif
+
+      - name: Record SIF image metadata
+        id: metadata
+        run: |
+          set -euo pipefail
+          echo "image_repo=${SIF_REPOSITORY}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+        env:
+          IMAGE_TAG: ${{ needs.build-docker.outputs.image_tag }}
+
   # ── Step 3a: Test AMI environments ─────────────────────────────────
   # Intentionally dormant while AMI test hangs are under investigation.
   # The pipeline still computes `environment_matrix`, and the reusable workflow
@@ -380,8 +426,35 @@ jobs:
         environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
     uses: ./.github/workflows/test-docker-reusable.yml
     with:
+      container_runtime: docker
       image_repo: ${{ needs.build-docker.outputs.image_repo }}
       image_tag: ${{ needs.build-docker.outputs.image_tag }}
+      environment_name: ${{ matrix.environment.name }}
+      full_test_script: ${{ matrix.environment.full_script }}
+      instance_type: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE || needs.lock-environments.outputs.default_instance_type }}
+      region: ${{ needs.lock-environments.outputs.aws_region }}
+    secrets:
+      docker_test_assume_role_arn: ${{ secrets.AWS_DOCKER_GHA_RUNNER_ASSUME_ROLE_ARN }}
+      gh_pat: ${{ secrets.GH_PAT }}
+
+  # ── Step 3c: Test SIF environments ─────────────────────────────────
+  test-sif:
+    name: Test SIF (${{ matrix.environment.name }})
+    needs: [lock-environments, build-sif]
+    if: ${{ needs.build-sif.outputs.image_repo != '' }}
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJson(needs.lock-environments.outputs.environment_matrix) }}
+    uses: ./.github/workflows/test-docker-reusable.yml
+    with:
+      container_runtime: apptainer
+      image_repo: ${{ needs.build-sif.outputs.image_repo }}
+      image_tag: ${{ needs.build-sif.outputs.image_tag }}
       environment_name: ${{ matrix.environment.name }}
       full_test_script: ${{ matrix.environment.full_script }}
       instance_type: ${{ vars.AWS_DOCKER_GHA_RUNNER_INSTANCE_TYPE || needs.lock-environments.outputs.default_instance_type }}
@@ -397,13 +470,15 @@ jobs:
     # job is re-enabled.
     # Restore `needs.test-ami.result == 'success'` in the `if` expression below
     # when `test-ami` is re-enabled.
-    needs: [lock-environments, build-ami, build-docker, test-docker]
+    needs: [lock-environments, build-ami, build-docker, build-sif, test-docker, test-sif]
     if: >-
       ${{ always() &&
           github.event_name != 'pull_request' &&
           needs.build-ami.outputs.ami_id != '' &&
           needs.build-docker.outputs.image_repo != '' &&
-          needs.test-docker.result == 'success' }}
+          needs.build-sif.outputs.image_repo != '' &&
+          needs.test-docker.result == 'success' &&
+          needs.test-sif.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -490,6 +565,26 @@ jobs:
           echo "Pushing promoted tags"
           docker push "${IMAGE_REPO}:latest"
           docker push "${IMAGE_REPO}:${PUBLISHED_DATE}"
+        shell: bash
+
+      # ── SIF promotion ──────────────────────────────────────────────
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to GHCR with ORAS
+        run: echo "${GH_TOKEN}" | oras login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Promote SIF image
+        env:
+          IMAGE_REPO: ${{ needs.build-sif.outputs.image_repo }}
+          IMAGE_TAG: ${{ needs.build-sif.outputs.image_tag }}
+          PUBLISHED_DATE: ${{ needs.lock-environments.outputs.published_date }}
+        run: |
+          set -euo pipefail
+          echo "Tagging ${IMAGE_REPO}:${IMAGE_TAG} as latest and ${PUBLISHED_DATE}"
+          oras tag "${IMAGE_REPO}:${IMAGE_TAG}" latest "${PUBLISHED_DATE}"
         shell: bash
 
       # ── Site metadata export ───────────────────────────────────────
